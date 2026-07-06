@@ -2,29 +2,33 @@
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
-#include <iostream>
-#include <stdexcept>
+
 #include <vector>
 
-const uint32_t WIDTH = 800;
-const uint32_t HEIGHT = 600;
-
-class VulkanApp
-{
+class VulkanApp {
 public:
-    VulkanApp();
-    ~VulkanApp();
     void run();
 
-private:
-    VkInstance instance;
+    VulkanApp();
+    ~VulkanApp();
 
-    void createInstance();
+private:
     void initWindow();
     void initVulkan();
     void mainLoop();
     void cleanUp();
 
+    void createInstance();
+    void initDebugMessenger();
+
 private:
     GLFWwindow* window = nullptr;
+    VkInstance instance = VK_NULL_HANDLE;
+
+    // Debug messenger (krävs för validation layers)
+    VkDebugUtilsMessengerEXT debugMessenger = VK_NULL_HANDLE;
+
+    // Window size
+    static constexpr int WIDTH = 800;
+    static constexpr int HEIGHT = 600;
 };
