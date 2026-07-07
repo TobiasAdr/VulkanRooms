@@ -19,7 +19,7 @@ private:
     void cleanUp();
 
     void createInstance();
-    void initDebugMessenger();
+    void setupDebugMessenger();
 
 private:
     GLFWwindow* window = nullptr;
