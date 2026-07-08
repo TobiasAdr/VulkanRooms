@@ -18,6 +18,70 @@ namespace {
 #endif
 }
 
+// -------------------- HELPERS --------------------------
+bool VulkanApp::isDeviceSuitable(VkPhysicalDevice device) {
+
+    QueueFamilyIndices indices = findQueueFamilies(device);
+
+    // does a queue family exist that supports graphics on the physical device? 
+    return indices.isComplete();
+
+}
+
+
+// Queue families are loceted in an array that is retrieved by vkGetPhysicalDeviceQueueFamilyProperties()
+// These are indices by an uint32_t, unsigned 32 bit integer, where each indice is one family
+// Index 0 --> Graphics + compute
+// Index 1 --> Compute
+// Index 2 --> Transfer etc ex
+
+// Family queues are groups of queues that perform the same actions
+// Each queue family has a set of properties that describe what kind of operations it can perform
+
+QueueFamilyIndices VulkanApp::findQueueFamilies(VkPhysicalDevice device){
+
+    QueueFamilyIndices indices;
+
+    uint32_t queueFamilyCount;
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
+
+    // queueFamilies.data() returns a pointer to the beginning of queueFamilies and fills it with data, element by element. 
+
+    // The data contains the properties of each queue family, such as the number of queues in the family and the types of operations that can be performed
+    std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
+
+    int i = 0;
+    
+    for (const auto& queueFamily : queueFamilies) {
+    
+        if(queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+
+            // Store the index of the queue family that supports graphics in the structs
+            indices.graphicsFamily = i;
+        
+        }
+
+        VkBool32 presentSupport = false;
+        vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport);
+
+        if(presentSupport) {
+            indices.presentFamily = i;
+        }
+
+        // Early exit if the previous if was true, graphics family found.
+        if(indices.isComplete()) {
+            break;
+        }
+
+        i++;
+    
+    }
+
+    return indices;
+
+}
+
 // -------------------- DEBUG CALLBACK --------------------
 
 // Wrapper for vkDestroyDebugUtilsMessengerEXT
@@ -166,12 +230,111 @@ void VulkanApp::setupDebugMessenger(){
 
 }   
 
+
+
+// -------------------- PHYSICAL DEVICE --------------------
+
+void VulkanApp::pickPhysicalDevice(){
+
+
+    uint32_t deviceCount = 0;
+
+    // Query the number of physical devices (GPUs) available on the system
+    // Similar with a lot of functions where you first use count to get the amount of something and then retrieve the data. 
+
+    vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
+
+    if(deviceCount == 0)
+        throw std::runtime_error("Failed to find GPUs with Vulkann support!");
+    
+    std::vector<VkPhysicalDevice> devices(deviceCount);
+    vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
+
+    for(const auto& device : devices){
+
+        if(isDeviceSuitable(device)){
+            physicalDevice = device;
+
+            break;
+        }
+
+    }
+
+    if(physicalDevice == VK_NULL_HANDLE)
+        throw std::runtime_error("Failed to find a suitable GPU!");
+    
+
+}
+
+// -------------------- LOGICAL DEVICE --------------------
+
+
+void VulkanApp::createLogicalDevice(){
+
+    QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+    float queuePriority = 1.0f;
+
+    std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
+    std::set<uint32_t> uniqueQueueFamilies = {indices.graphicsFamily.value(), indices.presentFamily.value()};
+
+    for (uint32_t queueFamily : uniqueQueueFamilies) {
+
+        VkDeviceQueueCreateInfo queueCreateInfo{};
+        queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queueCreateInfo.queueFamilyIndex = queueFamily;
+        queueCreateInfo.queueCount = 1;
+        queueCreateInfo.pQueuePriorities = &queuePriority;
+        queueCreateInfos.push_back(queueCreateInfo);
+
+    }
+
+    VkPhysicalDeviceFeatures deviceFeatures{};
+
+    VkDeviceCreateInfo createInfo{};
+
+    createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
+    createInfo.pQueueCreateInfos = queueCreateInfos.data();
+    createInfo.pEnabledFeatures = &deviceFeatures;
+    createInfo.enabledExtensionCount = 0;
+
+    if (enableValidationLayers) {
+        createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
+        createInfo.ppEnabledLayerNames = validationLayers.data();
+    } else {
+        createInfo.enabledLayerCount = 0;
+    }
+
+    if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create logical device!");
+    }
+
+    vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
+    vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
+
+}
+
+// -------------------- SURFACE --------------------
+
+void VulkanApp::createSurface(){
+
+    if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create window surface!");
+    }
+
+
+}
+
 // -------------------- INIT / LOOP --------------------
 
 void VulkanApp::initVulkan()
 {
     createInstance();
     setupDebugMessenger();
+    createSurface();
+    pickPhysicalDevice();
+    createLogicalDevice();
+
 }
 
 void VulkanApp::mainLoop()
@@ -199,9 +362,9 @@ void VulkanApp::cleanUp()
     if(enableValidationLayers){
         DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
     }
-
+    vkDestroySurfaceKHR(instance, surface, nullptr);
     vkDestroyInstance(instance, nullptr);
-
+    vkDestroyDevice(device, nullptr);
     glfwDestroyWindow(window);
     glfwTerminate();
 }
