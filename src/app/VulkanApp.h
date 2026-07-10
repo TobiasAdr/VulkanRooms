@@ -47,6 +47,8 @@ private:
 
     QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);
     bool isDeviceSuitable(VkPhysicalDevice device);
+    bool checkDeviceExtensionSupport(VkPhysicalDevice device);
+
 
 private:
     GLFWwindow* window = nullptr;
@@ -68,7 +70,13 @@ private:
     // Logical device (GPU) that will be used to run the Vulkan application
     VkDevice device = VK_NULL_HANDLE;
 
+    // device extensions.
+    const std::vector<const char*> deviceExtensions = {
+            VK_KHR_SWAPCHAIN_EXTENSION_NAME
+        };
+
     // Window size
     static constexpr int WIDTH = 800;
     static constexpr int HEIGHT = 600;
+
 };
