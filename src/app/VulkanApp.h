@@ -3,6 +3,9 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#include <cstdint> 
+#include <limits> 
+#include <algorithm> 
 #include <vector>
 #include <optional>
 #include <set>
@@ -24,6 +27,15 @@ struct QueueFamilyIndices{
 
 };
 
+struct SwapChainSupportDetails {
+
+    VkSurfaceCapabilitiesKHR capabilities; // Min, max width/height/number of swapchain images etc
+    std::vector<VkSurfaceFormatKHR> formats; // Pixel format, surface format
+    std::vector<VkPresentModeKHR> presentModes; // Available presentation modes
+
+};
+
+
 class VulkanApp {
 public:
     void run();
@@ -41,6 +53,7 @@ private:
     void createLogicalDevice();
     void createInstance();
     void createSurface();
+    void createSwapChain();
     void setupDebugMessenger();
 
 private:
@@ -67,6 +80,19 @@ private:
     VkQueue graphicsQueue = VK_NULL_HANDLE;
     VkQueue presentQueue = VK_NULL_HANDLE;
 
+
+    // Swap-chain
+    SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device);
+    VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats);
+    VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes);
+    VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities);
+
+    VkSwapchainKHR swapChain;
+    std::vector<VkImage> swapChainImages;
+    VkFormat swapChainImageFormat;
+    VkExtent2D swapChainExtent;
+
+    
     // Logical device (GPU) that will be used to run the Vulkan application
     VkDevice device = VK_NULL_HANDLE;
 
