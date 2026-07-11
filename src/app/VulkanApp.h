@@ -6,9 +6,14 @@
 #include <cstdint> 
 #include <limits> 
 #include <algorithm> 
-#include <vector>
 #include <optional>
 #include <set>
+#include <iostream>
+#include <stdexcept>
+#include <vector>
+#include <cstring>
+#include <fstream>
+
 
 
 struct QueueFamilyIndices{
@@ -54,6 +59,11 @@ private:
     void createInstance();
     void createSurface();
     void createSwapChain();
+    void createImageViews();
+    void createRenderPass();
+    void createGraphicsPipeline();
+    
+
     void setupDebugMessenger();
 
 private:
@@ -76,10 +86,12 @@ private:
     // Physical device (GPU) that will be used to run the Vulkan application
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 
+    // Logical device (GPU) that will be used to run the Vulkan application
+    VkDevice device = VK_NULL_HANDLE;
+
     // Queue that will be used to submit commands to the GPU
     VkQueue graphicsQueue = VK_NULL_HANDLE;
     VkQueue presentQueue = VK_NULL_HANDLE;
-
 
     // Swap-chain
     SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device);
@@ -92,9 +104,20 @@ private:
     VkFormat swapChainImageFormat;
     VkExtent2D swapChainExtent;
 
-    
-    // Logical device (GPU) that will be used to run the Vulkan application
-    VkDevice device = VK_NULL_HANDLE;
+    // Image View, Images
+    std::vector<VkImageView> swapChainImageViews;
+
+    // Shaders
+    VkShaderModule createShaderModule(const std::vector<char>& code);
+
+    // Render pass 
+    VkRenderPass renderPass;
+
+    // Pipeline
+    VkPipelineLayout pipelineLayout;
+
+    // Graphics pipeline
+    VkPipeline graphicsPipeline;
 
     // device extensions.
     const std::vector<const char*> deviceExtensions = {
