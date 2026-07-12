@@ -62,7 +62,14 @@ private:
     void createImageViews();
     void createRenderPass();
     void createGraphicsPipeline();
+    void createFrameBuffers();
+    void createCommandPool();
+    void createCommandBuffer();
+    void createSyncObjects();
     
+    void drawFrame();
+
+    void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
 
     void setupDebugMessenger();
 
@@ -118,6 +125,20 @@ private:
 
     // Graphics pipeline
     VkPipeline graphicsPipeline;
+
+    // Frame buffers
+    std::vector<VkFramebuffer> swapChainFramebuffers;
+
+    // Command Pool
+    VkCommandPool commandPool;
+
+    // Command buffers
+    VkCommandBuffer commandBuffer;
+
+    // Synchronization
+    VkSemaphore imageAvailableSemaphore;
+    VkSemaphore renderFinishedSemaphore;
+    VkFence inFlightFence;
 
     // device extensions.
     const std::vector<const char*> deviceExtensions = {
