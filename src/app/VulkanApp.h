@@ -52,7 +52,7 @@ private:
     void initWindow();
     void initVulkan();
     void mainLoop();
-    void cleanUp();
+    void cleanup();
 
     void pickPhysicalDevice();
     void createLogicalDevice();
@@ -62,16 +62,21 @@ private:
     void createImageViews();
     void createRenderPass();
     void createGraphicsPipeline();
-    void createFrameBuffers();
+    void createFramebuffers();
     void createCommandPool();
-    void createCommandBuffer();
+    void createCommandBuffers();
     void createSyncObjects();
-    
+
+    void recreateSwapChain();
+    void cleanupSwapChain();
+
     void drawFrame();
 
     void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
 
     void setupDebugMessenger();
+
+    static void framebufferResizeCallback(GLFWwindow* window, int width, int height);
 
 private:
 
@@ -133,12 +138,17 @@ private:
     VkCommandPool commandPool;
 
     // Command buffers
-    VkCommandBuffer commandBuffer;
+    std::vector<VkCommandBuffer> commandBuffers;
+
+    const int MAX_FRAMES_IN_FLIGHT = 2;
+    uint32_t currentFrame = 0;  
 
     // Synchronization
-    VkSemaphore imageAvailableSemaphore;
-    VkSemaphore renderFinishedSemaphore;
-    VkFence inFlightFence;
+    std::vector<VkSemaphore> imageAvailableSemaphores;
+    std::vector<VkSemaphore> renderFinishedSemaphores;
+    std::vector<VkFence> inFlightFences;
+
+    bool framebufferResized = false;
 
     // device extensions.
     const std::vector<const char*> deviceExtensions = {
