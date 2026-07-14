@@ -42,16 +42,20 @@ add_custom_command(
     OUTPUT
         ${SPIRV_DIR}/vert.spv
         ${SPIRV_DIR}/frag.spv
+        ${SPIRV_DIR}/comp.spv
     COMMAND ${GLSLC} ${SHADER_DIR}/shader.vert -o ${SPIRV_DIR}/vert.spv
     COMMAND ${GLSLC} ${SHADER_DIR}/shader.frag -o ${SPIRV_DIR}/frag.spv
+    COMMAND ${GLSLC} ${SHADER_DIR}/raytracer.comp -o ${SPIRV_DIR}/comp.spv
     DEPENDS
         ${SHADER_DIR}/shader.vert
         ${SHADER_DIR}/shader.frag
+        ${SHADER_DIR}/raytracer.comp
 )
 
 add_custom_target(Shaders DEPENDS
     ${SPIRV_DIR}/vert.spv
     ${SPIRV_DIR}/frag.spv
+    ${SPIRV_DIR}/comp.spv
 )
 
 add_dependencies(VulkanRooms Shaders)

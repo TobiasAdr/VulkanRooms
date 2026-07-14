@@ -22,6 +22,7 @@ struct QueueFamilyIndices{
     // Value not set, hasValue = False
     std::optional<uint32_t> graphicsFamily;
     std::optional<uint32_t> presentFamily;
+    std::optional<uint32_t> computeFamily;
 
     // does a queue family exist that supports graphics on the physical device? 
     bool isComplete() {
@@ -67,6 +68,15 @@ private:
     void createCommandBuffers();
     void createSyncObjects();
 
+
+
+    // Ray - tracing
+    void createStorageImage();
+    void createComputeDescriptors();
+    void createComputePipeline();
+
+
+
     void recreateSwapChain();
     void cleanupSwapChain();
 
@@ -78,6 +88,18 @@ private:
 
     static void framebufferResizeCallback(GLFWwindow* window, int width, int height);
 
+
+    void transitionImageLayout(
+    VkCommandBuffer cmd,
+    VkImage image,
+    VkImageLayout oldLayout,
+    VkImageLayout newLayout,
+    VkPipelineStageFlags srcStage,
+    VkPipelineStageFlags dstStage,
+    VkAccessFlags srcAccess,
+    VkAccessFlags dstAccess);
+
+    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
 private:
 
     QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);
@@ -86,6 +108,20 @@ private:
 
 
 private:
+
+    // Ray Tracing
+    VkImage storageImage;
+    VkDeviceMemory storageImageMemory;
+    VkImageView storageImageView;
+
+    VkDescriptorSetLayout computeDescriptorSetLayout;
+    VkDescriptorPool      descriptorPool;
+    VkDescriptorSet       computeDescriptorSet;
+
+
+    VkPipeline computePipeline;
+    VkPipelineLayout computePipelineLayout;
+
     GLFWwindow* window = nullptr;
     VkInstance instance = VK_NULL_HANDLE;
 

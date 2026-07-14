@@ -1,0 +1,121 @@
+// shaders/raytracer.comp
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(rgba32f, set = 0, binding = 0) uniform image2D outImage;
+
+struct Ray {
+
+    vec3 origin;
+    vec3 dir;
+
+
+};
+
+// A wall
+struct Plane {
+
+    vec3 normal;
+    float d;
+    vec3 color;
+
+
+};
+
+
+// ------------- RANDOM -------------
+
+uint rngState;
+
+uint pcg(uint v) {
+    uint state = v * 747796405u + 2891336453u;
+    uint word  = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+float rand() {
+    rngState = pcg(rngState);
+    return float(rngState) / float(0xFFFFFFFFu);
+}
+
+
+
+const int NUM_PLANES = 6; // Cornell box
+
+Plane planes[NUM_PLANES] = Plane[](
+
+    Plane(vec3( 1, 0, 0), -1.0, vec3(0.8, 0.1, 0.1)),
+    Plane(vec3(-1, 0, 0), -1.0, vec3(0.1, 0.8, 0.1)),
+    Plane(vec3( 0,-1, 0), -2.0, vec3(0.8, 0.8, 0.8)),
+    Plane(vec3( 0, 1, 0),  0.0, vec3(0.8, 0.8, 0.8)),
+    Plane(vec3( 0, 0,-1), -4.0, vec3(0.8, 0.8, 0.8)),
+    Plane(vec3( 0, 0, 1),  0.0, vec3(0.0, 0.0, 0.0)) 
+
+);
+
+Ray generateRay(ivec2 pixel, ivec2 size){
+
+    // Normalized pixels between -1 and 1
+    vec2 uv = (vec2(pixel) + 0.5) / vec2(size) *2.0 - 1.0;
+    uv.x *= float(size.x) / float(size.y);
+
+    vec3 cameraPos = vec3(0.0, 1.0, -3.0);
+
+    Ray ray;
+    ray.origin = cameraPos;
+    ray.dir = normalize(vec3(uv.x, uv.y, 1.0));
+    return ray;
+
+}
+
+float intersectPlane(Ray ray, Plane plane) {
+    
+
+    // Since both vetors are normalized, denom = cos(theta);
+    float denom = dot(plane.normal, ray.dir);
+
+    if (abs(denom) < 1e-6) return -1.0; 
+    
+    float t = (plane.d - dot(plane.normal, ray.origin)) / denom;
+    
+    return t > 0.0 ? t : -1.0;
+
+}
+
+vec3 traceRay(Ray ray) {
+    
+    float tMin = 1e20;
+    vec3 color = vec3(0.0);
+
+    for (int i = 0; i < NUM_PLANES; i++) {
+        
+        float t = intersectPlane(ray, planes[i]);
+        
+        if (t > 0.0 && t < tMin) {
+            tMin  = t;
+            color = planes[i].color;
+        }
+
+    }
+    
+    return color;
+
+}
+
+vec3 pathTrace(Ray ray){
+
+
+
+
+}
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size  = imageSize(outImage);
+    if (pixel.x >= size.x || pixel.y >= size.y) return;
+
+    Ray ray   = generateRay(pixel, size);
+    vec3 col  = traceRay(ray);
+
+    imageStore(outImage, pixel, vec4(col, 1.0));
+}
