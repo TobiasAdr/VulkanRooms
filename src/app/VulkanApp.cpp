@@ -13,6 +13,8 @@ namespace {
 #endif
 }
 
+int frameCount = 0;
+
 static std::vector<char> readFile(const std::string& filename){
     std::ifstream file(filename, std::ios::ate | std::ios::binary);
     if(!file.is_open()){
@@ -401,6 +403,9 @@ VkShaderModule VulkanApp::createShaderModule(const std::vector<char>& code){
 }
 
 void VulkanApp::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex){
+
+    frameCount++;
+
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     vkBeginCommandBuffer(commandBuffer, &beginInfo);
@@ -413,6 +418,9 @@ void VulkanApp::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imag
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
         computePipelineLayout, 0, 1, &computeDescriptorSet, 0, nullptr);
+
+    vkCmdPushConstants(commandBuffer, computePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(uint32_t), &frameCount);
+
     vkCmdDispatch(commandBuffer,
         (swapChainExtent.width  + 7) / 8,
         (swapChainExtent.height + 7) / 8, 1);
@@ -594,6 +602,7 @@ void VulkanApp::createStorageImage(){
 }
 
 void VulkanApp::createComputeDescriptors(){
+
     VkDescriptorSetLayoutBinding binding{};
     binding.binding         = 0;
     binding.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -633,11 +642,17 @@ void VulkanApp::createComputeDescriptors(){
     write.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     write.pImageInfo      = &imageInfo;
     vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+
 }
 
 void VulkanApp::createComputePipeline(){
     auto compCode = readFile("shaders/comp.spv");
     VkShaderModule compModule = createShaderModule(compCode);
+
+    VkPushConstantRange pushConstantRange{};
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = sizeof(uint32_t);
 
     VkPipelineShaderStageCreateInfo stageInfo{};
     stageInfo.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -649,6 +664,8 @@ void VulkanApp::createComputePipeline(){
     layoutInfo.sType          = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     layoutInfo.setLayoutCount = 1;
     layoutInfo.pSetLayouts    = &computeDescriptorSetLayout;
+    layoutInfo.pushConstantRangeCount = 1;
+    layoutInfo.pPushConstantRanges = &pushConstantRange;
     vkCreatePipelineLayout(device, &layoutInfo, nullptr, &computePipelineLayout);
 
     VkComputePipelineCreateInfo pipelineInfo{};
@@ -721,5 +738,5 @@ void VulkanApp::cleanup() {
     glfwDestroyWindow(window);
     glfwTerminate();
 
-    
+
 }
