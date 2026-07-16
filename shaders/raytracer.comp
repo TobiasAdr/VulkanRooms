@@ -1,5 +1,8 @@
-// shaders/raytracer.comp
 #version 450
+
+//#define FURNITURE
+#define BOX
+
 
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(rgba32f, set = 0, binding = 0) uniform image2D outImage;
@@ -10,26 +13,37 @@ layout(push_constant) uniform PushConstants {
 } pc;
 
 struct Ray {
-
     vec3 origin;
     vec3 dir;
-
-
 };
 
-// A wall
-struct Plane {
-
+struct HitInfo {
+    float t;
     vec3 normal;
-    float d;
     vec3 color;
-    float emission;
-
+    bool isLight;
 };
+
+const vec3 lightMin = vec3(-0.24, 1.99, 0.2);
+const vec3 lightMax = vec3( 0.24, 1.99, 0.6);
+
+
+
+
+
+
+// EMPTY SPACE
+
+
+
+
+
+
+
+
 
 // ------------- RANDOM -------------
 
-// claude stuff
 uint rngState;
 
 uint pcg(uint v) {
@@ -59,97 +73,151 @@ vec3 randomHemisphere(vec3 normal) {
     return normalize(tangent * localDir.x + bitang * localDir.y + normal * localDir.z);
 }
 
+// ---------------- RANDOM ----------------
 
 
-const int NUM_PLANES = 6; // Cornell box
 
-Plane planes[NUM_PLANES] = Plane[](
 
-    Plane(vec3( 1, 0, 0), -1.0, vec3(0.8, 0.1, 0.1), 0),
-    Plane(vec3(-1, 0, 0), -1.0, vec3(0.1, 0.8, 0.1), 0),
-    Plane(vec3( 0,-1, 0), -2.0, vec3(0.8, 0.8, 0.8), 5.0),
-    Plane(vec3( 0, 1, 0),  0.0, vec3(0.8, 0.8, 0.8), 0),
-    Plane(vec3( 0, 0,-1), -4.0, vec3(0.8, 0.8, 0.8), 0),
-    Plane(vec3( 0, 0, 1),  0.0, vec3(0.0, 0.0, 0.0), 0) 
 
-);
 
-Ray generateRay(ivec2 pixel, ivec2 size){
 
-    vec2 uv = (vec2(pixel) + 0.5) / vec2(size) *2.0 - 1.0;
+
+
+// EMPTY SPACE
+
+
+
+
+
+
+
+
+
+bool hitQuad(Ray ray, vec3 minP, vec3 maxP, vec3 normal, vec3 color, bool isLight, inout HitInfo closest) {
+    
+    // The normal is the normal coming out from the wall. For example, the floor has a plane normal going upwards, giving : vec3(0, 1, 0) (y=1)
+    // And, the right wall has a normal going left, vec3(-1,0,0) (x=-1)
+
+    float denom = dot(normal, ray.dir);
+
+    if (abs(denom) < 0.0001) return false;
+
+    vec3 planePoint = (minP + maxP) * 0.5;
+    float planeD = dot(normal, planePoint);
+    float t = (planeD - dot(normal, ray.origin)) / denom;
+    
+    if (t < 0.001 || t >= closest.t) return false;
+
+    vec3 p = ray.origin + t * ray.dir;
+
+
+    if (abs(normal.x) > 0.5) {
+    
+        if (p.y < minP.y || p.y > maxP.y) return false;
+        if (p.z < minP.z || p.z > maxP.z) return false;
+    
+    } else if (abs(normal.y) > 0.5) {
+    
+        if (p.x < minP.x || p.x > maxP.x) return false;
+        if (p.z < minP.z || p.z > maxP.z) return false;
+    
+    } else {
+
+        if (p.x < minP.x || p.x > maxP.x) return false;
+        if (p.y < minP.y || p.y > maxP.y) return false;
+    
+    }
+
+    closest.t = t;
+    closest.normal = denom < 0.0 ? normal : -normal;
+    closest.color = color;
+    closest.isLight = isLight;
+    return true;
+
+}
+
+bool hitScene(Ray ray, inout HitInfo hit) {
+
+    hit.t = 1e30;
+    bool didHit = false;
+
+    vec3 backRoomsWall = vec3(0.86, 0.78, 0.29);
+    vec3 lightColor = vec3(1.0, 0.96, 0.80);
+
+    
+    didHit = hitQuad(ray, vec3(-1, 0,0), vec3( 1, 0, 2), vec3(0, 1,0),  backRoomsWall, false, hit) || didHit; // Floor
+    didHit = hitQuad(ray, vec3(-1, 2,0), vec3( 1, 2, 2), vec3(0,-1,0),  backRoomsWall, false, hit) || didHit; // Roof
+    didHit = hitQuad(ray, vec3(-1, 0,0), vec3(-1, 2, 2), vec3(1, 0,0),  backRoomsWall, false, hit) || didHit; // Left
+    didHit = hitQuad(ray, vec3( 1, 0,0), vec3( 1, 2, 2), vec3(-1,0,0),  backRoomsWall, false, hit) || didHit; // Right
+    didHit = hitQuad(ray, vec3(-1, 0,0), vec3( 1, 2, 2), vec3(0, 0,-1), backRoomsWall, false, hit) || didHit; // Back
+
+    didHit = hitQuad(ray, lightMin, lightMax, vec3(0,-1,0), lightColor, true, hit) || didHit; // Light
+
+    vec3 boxMin = vec3(-0.4, 0.0, 0.33);
+    vec3 boxMax = vec3( 0.0, 0.6, 0.53);
+    vec3 boxColor = vec3(0.8);
+
+    // --------------- FURNITURE ---------------------------
+
+    #ifdef FURNITURE
+        // BOX
+        didHit = hitQuad(ray, vec3(boxMin.x, boxMax.y, boxMin.z), vec3(boxMax.x, boxMax.y, boxMax.z), vec3(0,-1,0), boxColor, false, hit) || didHit;
+        didHit = hitQuad(ray, vec3(boxMin.x, boxMin.y, boxMin.z), vec3(boxMax.x, boxMin.y, boxMax.z), vec3(0,1,0), boxColor, false, hit) || didHit;
+        didHit = hitQuad(ray, vec3(boxMin.x, boxMin.y, boxMin.z), vec3(boxMin.x, boxMax.y, boxMax.z), vec3(1,0,0), boxColor, false, hit) || didHit;
+        didHit = hitQuad(ray, vec3(boxMax.x, boxMin.y, boxMin.z), vec3(boxMax.x, boxMax.y, boxMax.z), vec3(-1,0,0), boxColor, false, hit) || didHit;
+        didHit = hitQuad(ray, vec3(boxMin.x, boxMin.y, boxMax.z), vec3(boxMax.x, boxMax.y, boxMax.z), vec3(0,0,-1), boxColor, false, hit) || didHit;
+        didHit = hitQuad(ray, vec3(boxMin.x, boxMin.y, boxMin.z), vec3(boxMax.x, boxMax.y, boxMin.z), vec3(0,0,1), boxColor, false, hit) || didHit;
+    
+    #endif
+
+
+    return didHit;
+
+}
+
+
+Ray generateRay(ivec2 pixel, ivec2 size) {
+
+    vec2 uv = (vec2(pixel) + 0.5) / vec2(size) * 2.0 - 1.0;
     uv.x *= float(size.x) / float(size.y);
-
-    vec3 cameraPos = vec3(0.0, 1.0, -3.0);
+    uv.y = -uv.y;
+ 
+    vec3 cameraPos = vec3(0.0, 1.0, -1.0);
 
     Ray ray;
     ray.origin = cameraPos;
-    ray.dir = normalize(vec3(uv.x, uv.y, 1.0));
+    ray.dir    = normalize(vec3(uv.x, uv.y, 1.0));
     return ray;
 
 }
 
-float intersectPlane(Ray ray, Plane plane) {
-    
-    float denom = dot(plane.normal, ray.dir);
-
-    if (abs(denom) < 1e-6) return -1.0; 
-    
-    float t = (plane.d - dot(plane.normal, ray.origin)) / denom;
-    
-    return t > 0.0 ? t : -1.0;
-
-}
 
 vec3 tracePath(Ray ray) {
-    
-    vec3 throughput = vec3(1.0); 
-    vec3 color = vec3(0.0);
 
-    const int MAX_BOUNCES = 4;
+    vec3 throughput = vec3(1.0);
+    vec3 color      = vec3(0.0);
+
+    const int MAX_BOUNCES = 8;
 
     for (int bounce = 0; bounce < MAX_BOUNCES; bounce++) {
 
-        float tMin    = 1e20;
-        int   hitIdx  = -1;
+        HitInfo hit;
+        if (!hitScene(ray, hit)) break;
 
-        for (int i = 0; i < NUM_PLANES; i++) {
-        
-            float t = intersectPlane(ray, planes[i]);
-            
-            if (t > 0.0 && t < tMin) {
-                tMin   = t;
-                hitIdx = i;
-            }
-        
-        }
-       
-        if (hitIdx == -1) {
-        
+        if (hit.isLight) {
+            color += throughput * vec3(15.0);
             break;
-        
         }
 
-        Plane hit = planes[hitIdx];
-
-        if (hit.emission > 0.0) {
-        
-            color += throughput * hit.color * hit.emission;
-            break;
-        
-        }
-       
-        vec3 hitPoint = ray.origin + tMin * ray.dir;
-        vec3 normal   = hit.normal;
+        vec3 hitPoint = ray.origin + hit.t * ray.dir + hit.normal * 0.001;
 
         ray.origin = hitPoint;
-        ray.dir    = randomHemisphere(normal);
-        
+        ray.dir    = randomHemisphere(hit.normal);
+
         throughput *= hit.color;
-    
+
         float p = max(throughput.r, max(throughput.g, throughput.b));
-        
         if (rand() > p) break;
-        
         throughput /= p;
     }
 
@@ -167,21 +235,16 @@ void main() {
     if (pixel.x >= size.x || pixel.y >= size.y) return;
 
     const int SAMPLES = 4;
-    
     vec3 col = vec3(0.0);
-    
 
     for (int s = 0; s < SAMPLES; s++) {
-    
         Ray ray = generateRay(pixel, size);
         col += tracePath(ray);
-    
     }
 
     col /= float(SAMPLES);
 
-    vec3 oldColor = imageLoad(outImage, pixel).rgb;
-
+    vec3 oldColor    = imageLoad(outImage, pixel).rgb;
     vec3 accumulated = (oldColor * float(pc.frameCount) + col) / float(pc.frameCount + 1);
 
     imageStore(outImage, pixel, vec4(accumulated, 1.0));
