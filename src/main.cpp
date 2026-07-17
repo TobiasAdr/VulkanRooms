@@ -3,15 +3,15 @@
 #include <iostream>
 #include <stdexcept>
 #include <vector>
-#include "app/VulkanApp.h"
+#include "app/pathtracer/PathTracer.h"
 
 int main() {
-    VulkanApp app;
+    PathTracer app;
     try {
         app.run();
     } catch (const std::exception& e) {
-        std::cerr << "Fel: " << e.what() << "\n";
-        return 1;
+        std::cerr << e.what() << std::endl;
+        return EXIT_FAILURE;
     }
-    return 0;
+    return EXIT_SUCCESS;
 }

@@ -1,32 +1,41 @@
 #pragma once
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
-#include <glm/glm.hpp>
+#include "../VulkanApp.h"
 
-struct CameraUBO {
-
-    glm::vec4 position;
-    glm::vec4 forward;
-    glm::vec4 right;
-    glm::vec4 up;
-    float fov;
-    float aspectRatio;
-    float focalDistance;
-    float aperture;
-
-}
 
 struct PushConstants {
 
 
-    uint32_t frameCount;
+    uint32_t frameCount = 0;
 
+};
 
-}
+class PathTracer : public VulkanApp {
+public:
+    PathTracer();
+    ~PathTracer();
 
+protected:
+    VkImage        storageImage       = VK_NULL_HANDLE;
+    VkDeviceMemory storageImageMemory = VK_NULL_HANDLE;
+    VkImageView    storageImageView   = VK_NULL_HANDLE;
 
-class PathTracer{
+    VkDescriptorSetLayout computeDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool      descriptorPool             = VK_NULL_HANDLE;
+    VkDescriptorSet       computeDescriptorSet       = VK_NULL_HANDLE;
 
+    VkPipeline       computePipeline       = VK_NULL_HANDLE;
+    VkPipelineLayout computePipelineLayout = VK_NULL_HANDLE;
 
-    
-}
+    uint32_t frameCount = 0;
+
+    PushConstants pc;
+
+    void initVulkan() override;
+    void cleanup()    override;
+
+    void createStorageImage();
+    void createComputeDescriptors();
+    void createComputePipeline();
+
+    void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) override;
+};

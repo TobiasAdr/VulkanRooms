@@ -21,6 +21,7 @@ find_package(Vulkan REQUIRED)
 add_executable(VulkanRooms
     src/main.cpp
     src/app/VulkanApp.cpp
+    src/app/pathtracer/PathTracer.cpp
 )
 
 target_link_libraries(VulkanRooms Vulkan::Vulkan glfw)
@@ -45,11 +46,11 @@ add_custom_command(
         ${SPIRV_DIR}/comp.spv
     COMMAND ${GLSLC} ${SHADER_DIR}/shader.vert -o ${SPIRV_DIR}/vert.spv
     COMMAND ${GLSLC} ${SHADER_DIR}/shader.frag -o ${SPIRV_DIR}/frag.spv
-    COMMAND ${GLSLC} ${SHADER_DIR}/raytracer.comp -o ${SPIRV_DIR}/comp.spv
+    COMMAND ${GLSLC} ${SHADER_DIR}/pathtracer.comp -o ${SPIRV_DIR}/comp.spv
     DEPENDS
         ${SHADER_DIR}/shader.vert
         ${SHADER_DIR}/shader.frag
-        ${SHADER_DIR}/raytracer.comp
+        ${SHADER_DIR}/pathtracer.comp
 )
 
 add_custom_target(Shaders DEPENDS
