@@ -13,8 +13,6 @@ struct BVHNode {
     int triangleStart;
     int triangleCount;
 
-    //float padding[2];
-
 }
 
 struct Triangle {
@@ -32,5 +30,15 @@ public:
 
     std::vector<BVHNode> nodes;
     std::vector<Triangle> sortedTriangles;
+
+    void build(const std::vector<Triangle>& triangles);
+
+private:
+
+    int buildRecursive(std::vector<Triangle>& tris, int start, int count);
+
+    glm::vec3 computeAABBMin(const std::vector<Triangle>& tris, int start, int count);
+    glm::vec3 computeAABBMax(const std::vector<Triangle>& tris, int start, int count);
+    glm::vec3 computeCentroid(const Triangle& tri);
 
 }
