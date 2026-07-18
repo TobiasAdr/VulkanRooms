@@ -22,6 +22,8 @@ add_executable(VulkanRooms
     src/main.cpp
     src/app/VulkanApp.cpp
     src/app/pathtracer/PathTracer.cpp
+    src/app/scene/MeshLoader.cpp
+    src/app/pathtracer/BVH.cpp
 )
 
 target_link_libraries(VulkanRooms Vulkan::Vulkan glfw)
@@ -30,6 +32,7 @@ target_include_directories(VulkanRooms PRIVATE
     src
     $ENV{VULKAN_SDK}/Include
     ${glfw_SOURCE_DIR}/include
+    external
 )
 
 # Shaders

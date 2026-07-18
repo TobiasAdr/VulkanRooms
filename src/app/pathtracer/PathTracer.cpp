@@ -5,7 +5,7 @@ static std::vector<char> readFile(const std::string& filename) {
 
     std::ifstream file(filename, std::ios::ate | std::ios::binary);
     if (!file.is_open())
-        throw std::runtime_error("failed to open file!");
+        throw std::runtime_error("failed to open file!" + filename + "\n");
     size_t fileSize = (size_t)file.tellg();
     std::vector<char> buffer(fileSize);
     file.seekg(0);
@@ -24,6 +24,7 @@ void PathTracer::initVulkan() {
     createStorageImage();
     createComputeDescriptors();
     createComputePipeline();
+    loadMesh("../assets/bunny.obj");
 
 }
 
@@ -65,26 +66,19 @@ void PathTracer::createStorageImage() {
 
 }
 
-void PathTracer::createComputeDescriptors() {
 
-    VkDescriptorSetLayoutBinding binding{};
-    binding.binding         = 0;
-    binding.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    binding.descriptorCount = 1;
-    binding.stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+void PathTracer::createDescriptorPool(){
 
-    VkDescriptorSetLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 1;
-    layoutInfo.pBindings    = &binding;
-    vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &computeDescriptorSetLayout);
-
-    VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1};
+    VkDescriptorPoolSize poolSizes[1]{};
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    poolSizes[0].descriptorCount = 1;
+  
     VkDescriptorPoolCreateInfo poolInfo{};
-    poolInfo.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.maxSets       = 1;
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes    = &poolSize;
+    poolInfo.pPoolSizes = poolSizes;
+    poolInfo.maxSets = 1;
+
     vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool);
 
     VkDescriptorSetAllocateInfo allocInfo{};
@@ -94,38 +88,71 @@ void PathTracer::createComputeDescriptors() {
     allocInfo.pSetLayouts        = &computeDescriptorSetLayout;
     vkAllocateDescriptorSets(device, &allocInfo, &computeDescriptorSet);
 
+}
+void PathTracer::createDescriptorSetLayout(){
+
+    VkDescriptorSetLayoutBinding bindings[1]{};
+    bindings[0].binding         = 0;
+    bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 1;
+    layoutInfo.pBindings    = bindings;
+    vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &computeDescriptorSetLayout);
+
+}
+
+void PathTracer::createWrites(){
+
     VkDescriptorImageInfo imageInfo{};
     imageInfo.imageView   = storageImageView;
     imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-    VkWriteDescriptorSet write{};
-    write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write.dstSet          = computeDescriptorSet;
-    write.dstBinding      = 0;
-    write.descriptorCount = 1;
-    write.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    write.pImageInfo      = &imageInfo;
-    vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+    VkWriteDescriptorSet writes[1]{};
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = computeDescriptorSet;
+    writes[0].dstBinding = 0;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    writes[0].pImageInfo = &imageInfo;
+    vkUpdateDescriptorSets(device, 1, writes, 0, nullptr);
 
 }
 
-void PathTracer::createComputePipeline() {
 
-    auto compCode = readFile("shaders/comp.spv");
-    VkShaderModule compModule = createShaderModule(compCode);
+void PathTracer::createComputeDescriptors() {
 
-    VkPushConstantRange pushConstantRange{};
+    createDescriptorSetLayout();
+    createDescriptorPool();
+    createWrites();
+
+}
+
+void PathTracer::pushConstants(){
+
     pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pushConstantRange.offset     = 0;
     pushConstantRange.size       = sizeof(pc);
 
-    VkPipelineShaderStageCreateInfo stageInfo{};
+}
+
+void PathTracer::createShaderInfo(){
+
+    auto compCode = readFile("shaders/comp.spv");
+    compModule = createShaderModule(compCode);
+
     stageInfo.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stageInfo.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
     stageInfo.module = compModule;
     stageInfo.pName  = "main";
 
-    VkPipelineLayoutCreateInfo layoutInfo{};
+}
+
+void PathTracer::createLayoutInfo(){
+
     layoutInfo.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     layoutInfo.setLayoutCount         = 1;
     layoutInfo.pSetLayouts            = &computeDescriptorSetLayout;
@@ -133,11 +160,224 @@ void PathTracer::createComputePipeline() {
     layoutInfo.pPushConstantRanges    = &pushConstantRange;
     vkCreatePipelineLayout(device, &layoutInfo, nullptr, &computePipelineLayout);
 
-    VkComputePipelineCreateInfo pipelineInfo{};
+}
+void PathTracer::createPipelineInfo(){
+
     pipelineInfo.sType  = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
     pipelineInfo.stage  = stageInfo;
     pipelineInfo.layout = computePipelineLayout;
     vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &computePipeline);
+
+}
+
+void PathTracer::loadMesh(const std::string& filename) {
+
+    MeshLoader loader;
+    loader.load(filename, glm::vec3(-0.2f, -1.3f, -0.5f), 8.0f);
+
+    BVH bvh;
+    bvh.build(loader.triangles);
+
+    createTriangleBuffer(bvh.sortedTriangles);
+    createBVHBuffer(bvh.nodes);
+
+}
+
+void PathTracer::createTriangleBuffer(const std::vector<Triangle>& triangles) {
+
+    VkDeviceSize bufferSize = sizeof(Triangle) * triangles.size();
+    triangleCount = static_cast<uint32_t>(triangles.size());
+
+    // Staging buffer
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingMemory;
+
+    VkBufferCreateInfo stagingInfo{};
+    stagingInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    stagingInfo.size = bufferSize;
+    stagingInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    stagingInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    vkCreateBuffer(device, &stagingInfo, nullptr, &stagingBuffer);
+
+    VkMemoryRequirements memReq;
+    vkGetBufferMemoryRequirements(device, stagingBuffer, &memReq);
+
+    VkMemoryAllocateInfo stagingAllocInfo{};
+    stagingAllocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    stagingAllocInfo.allocationSize = memReq.size;
+    stagingAllocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+    vkAllocateMemory(device, &stagingAllocInfo, nullptr, &stagingMemory);
+    vkBindBufferMemory(device, stagingBuffer, stagingMemory, 0);
+
+    void* data;
+    vkMapMemory(device, stagingMemory, 0, bufferSize, 0, &data);
+    memcpy(data, triangles.data(), bufferSize);
+    vkUnmapMemory(device, stagingMemory);
+
+    // GPU buffer
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = bufferSize;
+    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    vkCreateBuffer(device, &bufferInfo, nullptr, &triangleBuffer);
+    vkGetBufferMemoryRequirements(device, triangleBuffer, &memReq);
+
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memReq.size;
+    allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+    vkAllocateMemory(device, &allocInfo, nullptr, &triangleBufferMemory);
+    vkBindBufferMemory(device, triangleBuffer, triangleBufferMemory, 0);
+
+    // Kopiera via command buffer
+    VkCommandBufferAllocateInfo cmdAllocInfo{};
+    cmdAllocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    cmdAllocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cmdAllocInfo.commandPool = commandPool;
+    cmdAllocInfo.commandBufferCount = 1;
+
+    VkCommandBuffer cmd;
+    vkAllocateCommandBuffers(device, &cmdAllocInfo, &cmd);
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &beginInfo);
+
+    VkBufferCopy copyRegion{};
+    copyRegion.size = bufferSize;
+    vkCmdCopyBuffer(cmd, stagingBuffer, triangleBuffer, 1, &copyRegion);
+
+    vkEndCommandBuffer(cmd);
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmd;
+
+    vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(graphicsQueue);
+    vkFreeCommandBuffers(device, commandPool, 1, &cmd);
+
+    vkDestroyBuffer(device, stagingBuffer, nullptr);
+    vkFreeMemory(device, stagingMemory, nullptr);
+   
+}
+
+void PathTracer::createBVHBuffer(const std::vector<BVHNode>& nodes){
+
+    VkDeviceSize bufferSize = sizeof(BVHNode) * nodes.size();
+    BVHNodeCount = static_cast<uint32_t>(nodes.size());
+
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingMemory;
+
+    // ------------------- STAGING BUFFER -------------------
+
+    // Staging buffer lets the GPU memory read from host_visible to device local. 
+
+    // This lets the entirety of the buffer be on the gpu for reading. 
+
+    VkBufferCreateInfo stagingInfo{};
+    stagingInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    stagingInfo.size = bufferSize;
+    stagingInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    stagingInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    vkCreateBuffer(device, &stagingInfo, nullptr, &stagingBuffer);
+
+    VkMemoryRequirements memReq;
+    vkGetBufferMemoryRequirements(device, stagingBuffer, &memReq);
+
+    VkMemoryAllocateInfo stagingAllocInfo{};
+    stagingAllocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    stagingAllocInfo.allocationSize = memReq.size;
+    stagingAllocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
+    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+    vkAllocateMemory(device, &stagingAllocInfo, nullptr, &stagingMemory);
+    vkBindBufferMemory(device, stagingBuffer, stagingMemory, 0);
+
+    void* data;
+    vkMapMemory(device, stagingMemory, 0, bufferSize, 0, &data);
+    memcpy(data, nodes.data(), bufferSize);
+    vkUnmapMemory(device, stagingMemory);
+
+    // ----------------- STAGING BUFFER END -------------------------
+
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = bufferSize;
+    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    vkCreateBuffer(device, &bufferInfo, nullptr, &BVHBuffer);
+    vkGetBufferMemoryRequirements(device, BVHBuffer, &memReq);
+
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memReq.size;
+    allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+    vkAllocateMemory(device, &allocInfo, nullptr, &BVHBufferMemory);
+    vkBindBufferMemory(device, BVHBuffer, BVHBufferMemory, 0);
+
+    VkCommandBufferAllocateInfo cmdAllocInfo{};
+    cmdAllocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    cmdAllocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cmdAllocInfo.commandPool = commandPool;
+    cmdAllocInfo.commandBufferCount = 1;
+
+
+    // We record a one time command to send the BVH nodes to the GPU
+
+    // This is done one time on init. 
+
+    VkCommandBuffer cmd;
+    vkAllocateCommandBuffers(device, &cmdAllocInfo, &cmd);
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &beginInfo);
+
+    VkBufferCopy copyRegion{};
+    copyRegion.size = bufferSize;
+    vkCmdCopyBuffer(cmd, stagingBuffer, BVHBuffer, 1, &copyRegion);
+
+    vkEndCommandBuffer(cmd);
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmd;
+
+    // Graphics queue is used here to transfer the triangles to GPU
+
+    vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(graphicsQueue);
+    vkFreeCommandBuffers(device, commandPool, 1, &cmd);
+
+    vkDestroyBuffer(device, stagingBuffer, nullptr);
+    vkFreeMemory(device, stagingMemory, nullptr);
+
+    std::cout << "BVH created with " << BVHNodeCount << " nodes!\n";
+
+}
+
+void PathTracer::createComputePipeline() {
+
+    pushConstants();
+    createShaderInfo();
+    createLayoutInfo();
+    createPipelineInfo();
 
     vkDestroyShaderModule(device, compModule, nullptr);
 
@@ -207,3 +447,5 @@ void PathTracer::cleanup() {
     VulkanApp::cleanup();
 
 }
+
+
