@@ -1,6 +1,7 @@
 #pragma once
 #include <glm/glm.hpp>
 #include <vector>
+#include "../scene/MeshLoader.h"
 
 struct BVHNode {
 
@@ -12,15 +13,6 @@ struct BVHNode {
 
     int triangleStart;
     int triangleCount;
-
-}
-
-struct Triangle {
-
-    glm::vec4 v0;
-    glm::vec4 v1;
-    glm::vec4 v2;
-    glm::vec4 normal; 
 
 };
 
@@ -41,4 +33,4 @@ private:
     glm::vec3 computeAABBMax(const std::vector<Triangle>& tris, int start, int count);
     glm::vec3 computeCentroid(const Triangle& tri);
 
-}
+};

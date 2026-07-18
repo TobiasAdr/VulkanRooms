@@ -93,7 +93,7 @@ int BVH::buildRecursive(std::vector<Triangle>& tris, int start, int count){
     // -- TRIANGLE SORT --
 
     // Where to split the node
-    float mid = (node.aabbMin[axis] + nmode.aabbMax[axis]) * 0.5f;
+    float mid = (node.aabbMin[axis] + node.aabbMax[axis]) * 0.5f;
 
     // std::partition reorders elements in a range. Elements that satisfy the condition comes first. 
     // returns an iterator (it) to the second group (the group that did not satisfy the condition)
