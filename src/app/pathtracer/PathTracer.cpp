@@ -22,9 +22,9 @@ void PathTracer::initVulkan() {
 
     VulkanApp::initVulkan();
     createStorageImage();
+    loadMesh("../assets/bunny.obj");
     createComputeDescriptors();
     createComputePipeline();
-    loadMesh("../assets/bunny.obj");
 
 }
 
@@ -69,13 +69,19 @@ void PathTracer::createStorageImage() {
 
 void PathTracer::createDescriptorPool(){
 
-    VkDescriptorPoolSize poolSizes[1]{};
+    VkDescriptorPoolSize poolSizes[3]{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     poolSizes[0].descriptorCount = 1;
+
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    poolSizes[1].descriptorCount = 1;
+
+    poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    poolSizes[2].descriptorCount = 1;
   
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.poolSizeCount = 1;
+    poolInfo.poolSizeCount = 3;
     poolInfo.pPoolSizes = poolSizes;
     poolInfo.maxSets = 1;
 
@@ -91,15 +97,25 @@ void PathTracer::createDescriptorPool(){
 }
 void PathTracer::createDescriptorSetLayout(){
 
-    VkDescriptorSetLayoutBinding bindings[1]{};
+    VkDescriptorSetLayoutBinding bindings[3]{};
     bindings[0].binding         = 0;
     bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     bindings[0].descriptorCount = 1;
     bindings[0].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
 
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags= VK_SHADER_STAGE_COMPUTE_BIT;
+
+    bindings[2].binding = 2;
+    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 1;
+    layoutInfo.bindingCount = 3;
     layoutInfo.pBindings    = bindings;
     vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &computeDescriptorSetLayout);
 
@@ -111,14 +127,45 @@ void PathTracer::createWrites(){
     imageInfo.imageView   = storageImageView;
     imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-    VkWriteDescriptorSet writes[1]{};
+    VkDescriptorBufferInfo triBufferInfo{};
+    triBufferInfo.buffer = triangleBuffer;
+    triBufferInfo.offset = 0;
+    triBufferInfo.range = sizeof(Triangle) * triangleCount;
+
+    VkDescriptorBufferInfo BVHNodeBufferInfo{};
+    BVHNodeBufferInfo.buffer = BVHBuffer;
+    BVHNodeBufferInfo.offset = 0;
+    BVHNodeBufferInfo.range = sizeof(BVHNode) * BVHNodeCount;
+
+    int num_writes = 3;
+
+    VkWriteDescriptorSet writes[num_writes]{};
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[0].dstSet = computeDescriptorSet;
     writes[0].dstBinding = 0;
     writes[0].descriptorCount = 1;
     writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     writes[0].pImageInfo = &imageInfo;
-    vkUpdateDescriptorSets(device, 1, writes, 0, nullptr);
+
+    // Triangles
+    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet = computeDescriptorSet;
+    writes[1].dstBinding = 1;
+    writes[1].dstArrayElement = 0;
+    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    writes[1].descriptorCount = 1;
+    writes[1].pBufferInfo = &triBufferInfo;
+
+    // BVH nodes
+    writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[2].dstSet = computeDescriptorSet;
+    writes[2].dstBinding = 2;
+    writes[2].dstArrayElement = 0;
+    writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    writes[2].descriptorCount = 1;
+    writes[2].pBufferInfo = &BVHNodeBufferInfo;
+
+    vkUpdateDescriptorSets(device, num_writes, writes, 0, nullptr);
 
 }
 
@@ -436,6 +483,11 @@ void PathTracer::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t ima
 
 void PathTracer::cleanup() {
 
+    vkDestroyBuffer(device, triangleBuffer, nullptr);
+    vkFreeMemory(device, triangleBufferMemory, nullptr);
+    vkDestroyBuffer(device, BVHBuffer, nullptr);
+    vkFreeMemory(device, BVHBufferMemory, nullptr);
+
     vkDestroyPipeline(device, computePipeline, nullptr);
     vkDestroyPipelineLayout(device, computePipelineLayout, nullptr);
     vkDestroyDescriptorPool(device, descriptorPool, nullptr);
@@ -445,7 +497,4 @@ void PathTracer::cleanup() {
     vkFreeMemory(device, storageImageMemory, nullptr);
 
     VulkanApp::cleanup();
-
 }
-
-
