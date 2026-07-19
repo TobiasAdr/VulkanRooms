@@ -4,6 +4,7 @@
 #include <iostream>
 
 void MeshLoader::load(const std::string& filename, glm::vec3 offset, float scale) {
+    
     tinyobj::attrib_t attrib;
     std::vector<tinyobj::shape_t> shapes;
     std::vector<tinyobj::material_t> materials;
@@ -18,7 +19,7 @@ void MeshLoader::load(const std::string& filename, glm::vec3 offset, float scale
         for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); f++) {
             
             int fv = shape.mesh.num_face_vertices[f];
-            if (fv != 3) { indexOffset += fv; continue; } // bara trianglar
+            if (fv != 3) { indexOffset += fv; continue; } 
 
             Triangle tri;
             glm::vec3 verts[3];
