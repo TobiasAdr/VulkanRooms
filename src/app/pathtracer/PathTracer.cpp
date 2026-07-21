@@ -137,7 +137,7 @@ void PathTracer::createWrites(){
     BVHNodeBufferInfo.offset = 0;
     BVHNodeBufferInfo.range = sizeof(BVHNode) * BVHNodeCount;
 
-    int num_writes = 3;
+    const int num_writes = 3;
 
     VkWriteDescriptorSet writes[num_writes]{};
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -220,7 +220,7 @@ void PathTracer::createPipelineInfo(){
 void PathTracer::loadMesh(const std::string& filename) {
 
     MeshLoader loader;
-    loader.load(filename, glm::vec3(-0.2f, -1.3f, -0.5f), 8.0f);
+    loader.load("../assets/bunny.obj", glm::vec3(0.0f, 0.3f, 0.5f), 3.0f);
 
     BVH bvh;
     bvh.build(loader.triangles);
