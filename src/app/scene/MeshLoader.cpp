@@ -43,7 +43,7 @@ void MeshLoader::load(const std::string& filename, glm::vec3 offset, float scale
 
             triangles.push_back(tri);
 
-            if (triangles.size() >= 1000) break;
+            //if (triangles.size() >= 1000) break;
             
             indexOffset += fv;
         }
