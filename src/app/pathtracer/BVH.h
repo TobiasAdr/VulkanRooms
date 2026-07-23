@@ -14,6 +14,8 @@ struct BVHNode {
     int triangleStart;
     int triangleCount;
 
+    float padding[2];
+
 };
 
 class BVH {

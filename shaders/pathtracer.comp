@@ -17,6 +17,8 @@ struct BVHNode {
     int rightChild;
     int triangleStart;
     int triangleCount;
+    float padding0;
+    float padding1;
 };
 
 struct Ray {
@@ -181,6 +183,60 @@ bool triangleLoop(Ray ray, inout HitInfo hit) {
 
 }
 
+bool hitAABB(Ray ray, vec3 aabbMin, vec3 aabbMax, float tMax){
+
+    vec3 invDir = 1.0 / ray.dir; // to avoid division since its more expensive than multiplication
+    
+    vec3 t0 = (aabbMin - ray.origin) * invDir;
+    vec3 t1 = (aabbMax - ray.origin) * invDir;
+    
+    // from which way does it enter the box
+    vec3 tMin = min(t0, t1); 
+    vec3 tMax3 = max(t0, t1);
+    
+    // the largest tMin is the entry point, the smallest tMax is the exit point
+    float tEnter = max(max(tMin.x, tMin.y), tMin.z);
+    float tExit  = min(min(tMax3.x, tMax3.y), tMax3.z);
+
+    // check if x, y and z interval are all inside the box at the same time.
+    return tEnter <= tExit && tExit > 0.001 && tEnter < tMax;
+
+}
+
+bool hitBVH(Ray ray, inout HitInfo hit){
+
+    bool didHit = false;
+    int stack[32]; 
+    int stackPtr = 0;
+    stack[stackPtr++] = 0; // Root
+
+    while(stackPtr > 0 ){
+
+        int nodeIdx = stack[--stackPtr]; 
+        BVHNode node = bvhBuffer.nodes[nodeIdx];
+
+        if(!hitAABB(ray, node.aabbMin, node.aabbMax, hit.t)) continue;
+
+        if(node.triangleCount > 0){
+
+           for(int i = node.triangleStart; i < node.triangleStart + node.triangleCount; i++){
+               
+                didHit = hitTriangle(ray, triBuffer.triangles[i], hit) || didHit;
+            
+            }
+
+        } else {
+         
+            stack[stackPtr++] = node.leftChild; // writes over root index. 
+            stack[stackPtr++] = node.rightChild;
+        
+        }
+
+    }
+
+    return didHit;
+
+}
 
 bool hitScene(Ray ray, inout HitInfo hit) {
 
@@ -199,6 +255,8 @@ bool hitScene(Ray ray, inout HitInfo hit) {
     didHit = hitQuad(ray, lightMin, lightMax, vec3(0,-1,0), lightColor, true, hit) || didHit; // Light
 
     didHit = triangleLoop(ray, hit) || didHit;
+
+    //didHit = hitBVH(ray, hit) || didHit;
 
     vec3 boxMin = vec3(-0.4, 0.0, 0.33);
     vec3 boxMax = vec3( 0.0, 0.6, 0.53);
@@ -275,6 +333,8 @@ vec3 tracePath(Ray ray) {
 void main() {
 
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+
+    
     ivec2 size  = imageSize(outImage);
 
     rngState = uint(pixel.x) * 1973u + uint(pixel.y) * 9277u + pc.frameCount * 26699u + 1u;
