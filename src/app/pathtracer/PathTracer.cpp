@@ -23,6 +23,7 @@ void PathTracer::initVulkan() {
     VulkanApp::initVulkan();
     createStorageImage();
     loadMesh("../assets/bunny.obj");
+    createCameraBuffer();
     createComputeDescriptors();
     createComputePipeline();
 
@@ -66,10 +67,58 @@ void PathTracer::createStorageImage() {
 
 }
 
+void PathTracer::createCameraBuffer(){
+
+    VkDeviceSize bufferSize = sizeof(CameraUBO);
+
+    VkBufferCreateInfo cBuffer{};
+    cBuffer.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    cBuffer.size = bufferSize;
+    cBuffer.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+    cBuffer.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    if(vkCreateBuffer(device, &cBuffer, nullptr, &cameraBuffer) != VK_SUCCESS){
+
+        throw std::runtime_error("Failed to create Camera Buffer");
+
+    }
+
+    VkMemoryRequirements memReq;
+    vkGetBufferMemoryRequirements(device, cameraBuffer, &memReq);
+
+    VkMemoryAllocateInfo allocInfo{};
+
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memReq.size;
+
+    VkPhysicalDeviceMemoryProperties memProp;
+    vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProp);
+
+    uint32_t memTypeIndex = 0;
+        VkMemoryPropertyFlags props = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        for (uint32_t j = 0; j < memProp.memoryTypeCount; j++) {
+            if ((memReq.memoryTypeBits & (1 << j)) &&
+                (memProp.memoryTypes[j].propertyFlags & props) == props) {
+                memTypeIndex = j;
+                break;
+            }
+        }
+        
+    allocInfo.memoryTypeIndex = memTypeIndex;
+
+    if(vkAllocateMemory(device, &allocInfo, nullptr, &cameraBufferMemory) != VK_SUCCESS)
+        throw std::runtime_error("Kunde inte allokera kamera buffer minne");
+
+
+    vkBindBufferMemory(device, cameraBuffer, cameraBufferMemory, 0);
+    vkMapMemory(device, cameraBufferMemory, 0, bufferSize, 0, &cameraMapped);
+
+}
+
 
 void PathTracer::createDescriptorPool(){
 
-    VkDescriptorPoolSize poolSizes[3]{};
+    VkDescriptorPoolSize poolSizes[4]{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     poolSizes[0].descriptorCount = 1;
 
@@ -78,10 +127,13 @@ void PathTracer::createDescriptorPool(){
 
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     poolSizes[2].descriptorCount = 1;
+
+    poolSizes[3].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSizes[3].descriptorCount = 1;
   
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.poolSizeCount = 3;
+    poolInfo.poolSizeCount = 4;
     poolInfo.pPoolSizes = poolSizes;
     poolInfo.maxSets = 1;
 
@@ -97,7 +149,7 @@ void PathTracer::createDescriptorPool(){
 }
 void PathTracer::createDescriptorSetLayout(){
 
-    VkDescriptorSetLayoutBinding bindings[3]{};
+    VkDescriptorSetLayoutBinding bindings[4]{};
     bindings[0].binding         = 0;
     bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     bindings[0].descriptorCount = 1;
@@ -113,9 +165,14 @@ void PathTracer::createDescriptorSetLayout(){
     bindings[2].descriptorCount = 1;
     bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
+    bindings[3].binding = 3;
+    bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    bindings[3].descriptorCount = 1;
+    bindings[3].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 3;
+    layoutInfo.bindingCount = 4;
     layoutInfo.pBindings    = bindings;
     vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &computeDescriptorSetLayout);
 
@@ -137,7 +194,13 @@ void PathTracer::createWrites(){
     BVHNodeBufferInfo.offset = 0;
     BVHNodeBufferInfo.range = sizeof(BVHNode) * BVHNodeCount;
 
-    const int num_writes = 3;
+    VkDescriptorBufferInfo cameraUBOInfo{};
+    cameraUBOInfo.buffer = cameraBuffer;
+    cameraUBOInfo.offset = 0;
+    cameraUBOInfo.range = sizeof(CameraUBO);
+
+
+    const int num_writes = 4;
 
     VkWriteDescriptorSet writes[num_writes]{};
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -165,8 +228,22 @@ void PathTracer::createWrites(){
     writes[2].descriptorCount = 1;
     writes[2].pBufferInfo = &BVHNodeBufferInfo;
 
+    // Camera UBO
+    writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[3].dstSet = computeDescriptorSet;
+    writes[3].dstBinding = 3;
+    writes[3].dstArrayElement = 0;
+    writes[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[3].descriptorCount = 1;
+    writes[3].pBufferInfo = &cameraUBOInfo;
+
     vkUpdateDescriptorSets(device, num_writes, writes, 0, nullptr);
 
+}
+
+void PathTracer::updateCameraBuffer() {
+    CameraUBO data = cam.toUBO();
+    memcpy(cameraMapped, &data, sizeof(CameraUBO));
 }
 
 
@@ -220,7 +297,7 @@ void PathTracer::createPipelineInfo(){
 void PathTracer::loadMesh(const std::string& filename) {
 
     MeshLoader loader;
-    loader.load("../assets/bunny.obj", glm::vec3(0.0f, 0.3f, 0.5f), 3.0f);
+    loader.load("../assets/bunny.obj", glm::vec3(0.0f, 0.3f, 0.5f), 5.0f);
 
     BVH bvh;
     bvh.build(loader.triangles);
@@ -380,9 +457,8 @@ void PathTracer::createBVHBuffer(const std::vector<BVHNode>& nodes){
     cmdAllocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     cmdAllocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     cmdAllocInfo.commandPool = commandPool;
-    cmdAllocInfo.commandBufferCount = 1;
-
-
+    cmdAllocInfo.commandBufferCount = 1; 
+    
     // We record a one time command to send the BVH nodes to the GPU
 
     // This is done one time on init. 
@@ -487,6 +563,8 @@ void PathTracer::cleanup() {
     vkFreeMemory(device, triangleBufferMemory, nullptr);
     vkDestroyBuffer(device, BVHBuffer, nullptr);
     vkFreeMemory(device, BVHBufferMemory, nullptr);
+    vkDestroyBuffer(device, cameraBuffer, nullptr);
+    vkFreeMemory(device, cameraBufferMemory, nullptr);
 
     vkDestroyPipeline(device, computePipeline, nullptr);
     vkDestroyPipelineLayout(device, computePipelineLayout, nullptr);
@@ -497,4 +575,9 @@ void PathTracer::cleanup() {
     vkFreeMemory(device, storageImageMemory, nullptr);
 
     VulkanApp::cleanup();
+}
+
+void PathTracer::drawFrame() {
+    updateCameraBuffer();
+    VulkanApp::drawFrame();
 }

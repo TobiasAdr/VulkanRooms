@@ -7,13 +7,10 @@ struct BVHNode {
 
     glm::vec3 aabbMin;
     int leftChild;
-
     glm::vec3 aabbMax;
     int rightChild;
-
     int triangleStart;
-    int triangleCount;
-
+    int triangleCount;  
     float padding[2];
 
 };
