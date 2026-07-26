@@ -577,7 +577,23 @@ void PathTracer::cleanup() {
     VulkanApp::cleanup();
 }
 
+void PathTracer::moveCamera(){
+
+    bool moved = false;
+    float speed = 0.05f;
+
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) { cam.pos += cam.forward() * speed; moved = true; }
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) { cam.pos -= cam.forward() * speed; moved = true; }
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) { cam.pos -= cam.right()   * speed; moved = true; }
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) { cam.pos += cam.right()   * speed; moved = true; }
+
+    if (moved) pc.frameCount = 0;
+
+}
+
 void PathTracer::drawFrame() {
+
+    moveCamera();
     updateCameraBuffer();
     VulkanApp::drawFrame();
 }
