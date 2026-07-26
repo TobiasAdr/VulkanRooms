@@ -11,6 +11,33 @@ struct PushConstants {
 
 };
 
+struct CameraUBO {
+    glm::vec4 position;
+    glm::vec4 forward;
+    glm::vec4 right;
+    glm::vec4 up;
+};
+
+struct Camera {
+    glm::vec3 pos   = {0.f, 1.f, -1.f};
+    float yaw       = 0.f;
+    float pitch     = 0.f;
+
+    glm::vec3 forward() const {
+        return glm::normalize(glm::vec3(
+            cos(glm::radians(pitch)) * sin(glm::radians(yaw)),
+            sin(glm::radians(pitch)),
+            cos(glm::radians(pitch)) * cos(glm::radians(yaw))
+        ));
+    }
+    glm::vec3 right() const { return glm::normalize(glm::cross(forward(), {0,1,0})); }
+    glm::vec3 up()    const { return glm::cross(right(), forward()); }
+
+    CameraUBO toUBO() const {
+        return { glm::vec4(pos,0), glm::vec4(forward(),0), glm::vec4(right(),0), glm::vec4(up(),0) };
+    }
+};
+
 class PathTracer : public VulkanApp {
 
 public:
@@ -18,6 +45,13 @@ public:
     ~PathTracer();
 
 protected:
+
+    // Camera
+    Camera cam;
+    VkBuffer cameraBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory cameraBufferMemory = VK_NULL_HANDLE;
+    void* cameraMapped;
+    void updateCameraBuffer();
 
     // BVH
     VkBuffer BVHBuffer = VK_NULL_HANDLE;
@@ -66,8 +100,10 @@ protected:
 
     void loadMesh(const std::string& filename);
     void createTriangleBuffer(const std::vector<Triangle>& triangles);
+    void createCameraBuffer();
     void createBVHBuffer(const std::vector<BVHNode>& nodes);    
 
     void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) override;
 
+    void drawFrame() override;
 };
