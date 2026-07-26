@@ -36,6 +36,7 @@ struct Camera {
     CameraUBO toUBO() const {
         return { glm::vec4(pos,0), glm::vec4(forward(),0), glm::vec4(right(),0), glm::vec4(up(),0) };
     }
+
 };
 
 class PathTracer : public VulkanApp {
@@ -52,6 +53,7 @@ protected:
     VkDeviceMemory cameraBufferMemory = VK_NULL_HANDLE;
     void* cameraMapped;
     void updateCameraBuffer();
+    void moveCamera();
 
     // BVH
     VkBuffer BVHBuffer = VK_NULL_HANDLE;
