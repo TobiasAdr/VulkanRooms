@@ -3,6 +3,8 @@
 //#define FURNITURE
 #define BOX
 
+#define useNEE
+
 struct Triangle {
     vec4 v0;
     vec4 v1;
@@ -326,7 +328,6 @@ bool hitScene(Ray ray, inout HitInfo hit) {
 
 }
 
-
 Ray generateRay(ivec2 pixel, ivec2 size) {
 
     vec2 uv = (vec2(pixel) + 0.5) / vec2(size) * 2.0 - 1.0;
@@ -342,22 +343,54 @@ Ray generateRay(ivec2 pixel, ivec2 size) {
 
 }
 
-vec3 NEE(vec3 hitPoint, vec3 hitNormal){
-
-    HitInfo hit;
+vec3 NEE(vec3 hitPoint, vec3 hitNormal, vec3 surfaceColor) {
     
-    Ray shadowRay;
-
     vec3 lightPoint = randomPointOnLight();
-    vec3 shadowDir = normalize(lightPoint - hitPoint);
+    vec3 lightDir = lightPoint - hitPoint;
+    float lightDistanceSqr = dot(lightDir, lightDir);
+    float lightDistance = sqrt(lightDistanceSqr);
+    vec3 shadowDir = lightDir / lightDistance;
 
+    vec3 lightNormal = vec3(0.0, -1.0, 0.0);
+
+
+    // How much the light should contribute, how much is the light pointing towards the point
+    float NdotL = max(dot(hitNormal, shadowDir), 0.0);
+    float NdotL_light = max(dot(lightNormal, -shadowDir), 0.0);
+    if (NdotL <= 0.0 || NdotL_light <= 0.0) return vec3(0.0);
+
+    Ray shadowRay;
     shadowRay.origin = hitPoint + hitNormal * 0.001;
     shadowRay.dir = shadowDir;
 
-    if(!hitScene(shadowRay, hit)) return vec3(0.0);
+    HitInfo hit;
+    
+    if (hitScene(shadowRay, hit)) {
+    
+        if (!hit.isLight || abs(hit.t - lightDistance) > 0.01) {
+            return vec3(0.0); 
+        }
 
-    return vec3(0.0);
+    } else {
 
+        return vec3(0.0);
+    
+    }
+    
+    // Less light if the light area is smaller from the hitpoint.  
+    float lightArea = (lightMax.x - lightMin.x) * (lightMax.z - lightMin.z);
+    
+    vec3 lightEmission = vec3(15.0); 
+
+    const float PI = 3.14159265;
+
+    // Simple brdf, the same light in all directions. 
+    vec3 brdf = surfaceColor / PI;
+
+    // Rendering equation without integration
+    vec3 directLight = lightEmission * brdf * NdotL * NdotL_light * lightArea / lightDistanceSqr;
+
+    return directLight;
 }
 
 vec3 tracePath(Ray ray) {
@@ -372,20 +405,39 @@ vec3 tracePath(Ray ray) {
         HitInfo hit;
         if (!hitScene(ray, hit)) break;
 
+
+        #ifdef useNEE
         if (hit.isLight) {
-            color += throughput * vec3(15.0);
+            if (bounce == 0) {
+                color += throughput * vec3(15.0);
+            }
             break;
         }
+        #endif
+
+        #ifndef useNEE
+        if(hit.isLight){
+
+            color += throughput * vec3(15.0);
+            break;
+
+        }
+        #endif
 
         vec3 hitPoint = ray.origin + hit.t * ray.dir + hit.normal * 0.001;
-
         vec3 hitNormal = hit.normal;
-        //color += throughput * NEE(hitPoint, hitNormal);
+        vec3 hitColor = hit.color;
 
-        ray.origin = hitPoint;
-        ray.dir    = randomHemisphere(hit.normal);
+        #ifdef useNEE
 
-        throughput *= hit.color;
+        color += throughput * NEE(hitPoint, hitNormal, hitColor);
+        
+        #endif
+
+        ray.origin = hitPoint + hitNormal * 0.001;
+        ray.dir    = randomHemisphere(hitNormal);
+
+        throughput *= hitColor;
 
         float p = max(throughput.r, max(throughput.g, throughput.b));
         if (rand() > p) break;
