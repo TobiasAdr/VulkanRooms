@@ -303,7 +303,17 @@ void PathTracer::createPipelineInfo(){
 void PathTracer::loadMesh(const std::string& filename) {
 
     MeshLoader loader;
-    loader.load("../assets/bunny.obj", glm::vec3(0.0f, 0.3f, 0.5f), 5.0f);
+    loader.load("../assets/chair.obj", glm::vec3(2.0f, 0.f, 0.5f), .5f);
+    loader.load("../assets/chair.obj", glm::vec3(4.0f, 0.f, 4.f), .5f);
+    loader.load("../assets/chair.obj", glm::vec3(7.0f, 0.f, 1.f), .5f);
+    loader.load("../assets/chair.obj", glm::vec3(7.0f, 0.f, 8.f), .5f);
+    loader.load("../assets/chair.obj", glm::vec3(9.0f, 0.f, 3.f), .5f);
+
+    loader.load("../assets/smalltable.obj", glm::vec3(4.0f, 0.f, 3.f), .5f);
+    loader.load("../assets/smalltable.obj", glm::vec3(7.0f, 0.f, 4.f), .5f);
+
+
+    //loader.load("../assets/bunny.obj", glm::vec3(1.0f, 0.3f, 0.5f), 5.0f);
 
     BVH bvh;
     bvh.build(loader.triangles);
