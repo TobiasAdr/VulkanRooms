@@ -604,9 +604,15 @@ void VulkanApp::recreateSwapChain() {
     cleanupSwapChain();
     createSwapChain();
     createImageViews();
+    createImGuiFramebuffers();
 }
 
 void VulkanApp::cleanupSwapChain() {
+
+    for (auto fb : imGuiFramebuffers)
+        vkDestroyFramebuffer(device, fb, nullptr);
+    imGuiFramebuffers.clear();
+
     for (auto imageView : swapChainImageViews)
         vkDestroyImageView(device, imageView, nullptr);
     vkDestroySwapchainKHR(device, swapChain, nullptr);
