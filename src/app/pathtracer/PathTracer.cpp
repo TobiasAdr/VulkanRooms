@@ -255,11 +255,17 @@ void PathTracer::createComputeDescriptors() {
 
 }
 
-void PathTracer::pushConstants(){
+void PathTracer::pushConstants() {
+
+    pc.frameCount   = 0;
+    pc.useNEE       = 1;
+    pc.useRealLens  = 0;
+    pc.focalLength  = 5.0f;
+    pc.apertureSize = 0.05f;
 
     pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pushConstantRange.offset     = 0;
-    pushConstantRange.size       = sizeof(pc);
+    pushConstantRange.size       = sizeof(PushConstants);
 
 }
 
@@ -514,6 +520,7 @@ void PathTracer::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t ima
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     vkBeginCommandBuffer(commandBuffer, &beginInfo);
 
+   
     transitionImageLayout(commandBuffer, storageImage,
         VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
         VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
@@ -528,6 +535,7 @@ void PathTracer::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t ima
         (swapChainExtent.width  + 7) / 8,
         (swapChainExtent.height + 7) / 8, 1);
 
+   
     transitionImageLayout(commandBuffer, storageImage,
         VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -544,14 +552,22 @@ void PathTracer::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t ima
     blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     blit.dstOffsets[1]  = {(int32_t)swapChainExtent.width, (int32_t)swapChainExtent.height, 1};
     vkCmdBlitImage(commandBuffer,
-        storageImage,            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        storageImage,                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         1, &blit, VK_FILTER_NEAREST);
 
-    transitionImageLayout(commandBuffer, swapChainImages[imageIndex],
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-        VK_ACCESS_TRANSFER_WRITE_BIT, 0);
+    
+    VkRenderPassBeginInfo rpBegin{};
+    rpBegin.sType             = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rpBegin.renderPass        = imGuiRenderPass;
+    rpBegin.framebuffer       = imGuiFramebuffers[imageIndex];
+    rpBegin.renderArea.offset = {0, 0};
+    rpBegin.renderArea.extent = swapChainExtent;
+    rpBegin.clearValueCount   = 0;  // LOAD_OP_LOAD, inget clear
+
+    vkCmdBeginRenderPass(commandBuffer, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
+    vkCmdEndRenderPass(commandBuffer);
 
     vkEndCommandBuffer(commandBuffer);
 
@@ -595,5 +611,32 @@ void PathTracer::drawFrame() {
 
     moveCamera();
     updateCameraBuffer();
+
+    ImGui_ImplVulkan_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+
+    ImGui::Begin("Settings");
+
+    bool nee = pc.useNEE;
+    if (ImGui::Checkbox("NEE", &nee)) {
+        pc.useNEE = nee ? 1 : 0;
+        pc.frameCount = 0;
+    }
+
+    bool realLens = pc.useRealLens;
+    if (ImGui::Checkbox("Real Lens", &realLens)) {
+        pc.useRealLens = realLens ? 1 : 0;
+        pc.frameCount = 0;
+    }
+
+    if (ImGui::SliderFloat("Focal Length",  &pc.focalLength,  0.1f, 20.0f)) pc.frameCount = 0;
+    if (ImGui::SliderFloat("Aperture Size", &pc.apertureSize, 0.0f, 0.5f))  pc.frameCount = 0;
+
+    ImGui::End();
+    ImGui::Render();
+
+
+
     VulkanApp::drawFrame();
 }

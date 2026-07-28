@@ -186,6 +186,129 @@ bool VulkanApp::isDeviceSuitable(VkPhysicalDevice device) {
     return indices.isComplete() && extensionsSupported && swapChainAdequate;
 }
 
+void VulkanApp::createImGuiRenderPass() {
+
+    VkAttachmentDescription attachment{};
+    attachment.format         = swapChainImageFormat;
+    attachment.samples        = VK_SAMPLE_COUNT_1_BIT;
+    attachment.loadOp         = VK_ATTACHMENT_LOAD_OP_LOAD;       
+    attachment.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+    attachment.initialLayout  = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    attachment.finalLayout    = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+    VkAttachmentReference colorRef{};
+    colorRef.attachment = 0;
+    colorRef.layout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint    = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments    = &colorRef;
+
+    VkSubpassDependency dep{};
+    dep.srcSubpass    = VK_SUBPASS_EXTERNAL;
+    dep.dstSubpass    = 0;
+    dep.srcStageMask  = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    dep.dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dep.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+    VkRenderPassCreateInfo rpInfo{};
+    rpInfo.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    rpInfo.attachmentCount = 1;
+    rpInfo.pAttachments    = &attachment;
+    rpInfo.subpassCount    = 1;
+    rpInfo.pSubpasses      = &subpass;
+    rpInfo.dependencyCount = 1;
+    rpInfo.pDependencies   = &dep;
+
+    vkCreateRenderPass(device, &rpInfo, nullptr, &imGuiRenderPass);
+
+}
+
+void VulkanApp::createImGuiFramebuffers() {
+
+    imGuiFramebuffers.resize(swapChainImageViews.size());
+
+    for (size_t i = 0; i < swapChainImageViews.size(); i++) {
+
+        VkFramebufferCreateInfo fbInfo{};
+        fbInfo.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        fbInfo.renderPass      = imGuiRenderPass;
+        fbInfo.attachmentCount = 1;
+        fbInfo.pAttachments    = &swapChainImageViews[i];
+        fbInfo.width           = swapChainExtent.width;
+        fbInfo.height          = swapChainExtent.height;
+        fbInfo.layers          = 1;
+
+        vkCreateFramebuffer(device, &fbInfo, nullptr, &imGuiFramebuffers[i]);
+
+    }
+
+}
+
+void VulkanApp::initImGui() {
+
+    // Descriptor pool för ImGui
+    VkDescriptorPoolSize poolSizes[] = {
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 }
+    };
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.flags         = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    poolInfo.maxSets       = 1;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes    = poolSizes;
+    vkCreateDescriptorPool(device, &poolInfo, nullptr, &imGuiDescriptorPool);
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGui::StyleColorsDark();
+
+    ImGui_ImplGlfw_InitForVulkan(window, true);
+
+    ImGui_ImplVulkan_InitInfo initInfo{};
+    initInfo.Instance        = instance;
+    initInfo.PhysicalDevice  = physicalDevice;
+    initInfo.Device          = device;
+    initInfo.QueueFamily     = findQueueFamilies(physicalDevice).graphicsFamily.value();
+    initInfo.Queue           = graphicsQueue;
+    initInfo.DescriptorPool  = imGuiDescriptorPool;
+    initInfo.MinImageCount   = 2;
+    initInfo.ImageCount      = static_cast<uint32_t>(swapChainImages.size());
+
+    ImGui_ImplVulkan_Init(&initInfo, imGuiRenderPass);
+    
+    VkCommandBufferAllocateInfo cmdAllocInfo{};
+    cmdAllocInfo.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    cmdAllocInfo.commandPool        = commandPool;
+    cmdAllocInfo.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cmdAllocInfo.commandBufferCount = 1;
+
+    VkCommandBuffer cmd;
+    vkAllocateCommandBuffers(device, &cmdAllocInfo, &cmd);
+
+    VkCommandBufferBeginInfo cmdBegin{};
+    cmdBegin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    cmdBegin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &cmdBegin);
+
+    ImGui_ImplVulkan_CreateFontsTexture(cmd);
+
+    vkEndCommandBuffer(cmd);
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers    = &cmd;
+
+    vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(graphicsQueue);
+    vkFreeCommandBuffers(device, commandPool, 1, &cmd);
+
+}
+
+
 bool VulkanApp::checkDeviceExtensionSupport(VkPhysicalDevice device) {
     uint32_t extensionCount;
     vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
@@ -500,6 +623,9 @@ void VulkanApp::initVulkan() {
     createCommandPool();
     createCommandBuffers();
     createSyncObjects();
+    createImGuiRenderPass();       
+    createImGuiFramebuffers();     
+    initImGui();                   
 }
 
 void VulkanApp::mainLoop() {
@@ -528,6 +654,14 @@ void VulkanApp::cleanup() {
         vkDestroyFence(device, inFlightFences[i], nullptr);
 
     vkDestroyCommandPool(device, commandPool, nullptr);
+
+    ImGui_ImplVulkan_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+    vkDestroyDescriptorPool(device, imGuiDescriptorPool, nullptr);
+    for (auto fb : imGuiFramebuffers)
+        vkDestroyFramebuffer(device, fb, nullptr);
+    vkDestroyRenderPass(device, imGuiRenderPass, nullptr);
     vkDestroyDevice(device, nullptr);
 
     if (enableValidationLayers)
