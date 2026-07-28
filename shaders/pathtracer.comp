@@ -80,7 +80,7 @@ const vec3 lightMin = vec3(0.86, 1.99, 0.2);
 const vec3 lightMax = vec3( 1.24, 1.99, 0.6);
 
 const vec3 backRoomsWall = vec3(0.86, 0.78, 0.29);
-const vec3 backRoomsFloor = vec3(0.42, 0.35, 0.25);
+const vec3 backRoomsFloor = vec3(0.52, 0.45, 0.18);
 const vec3 lightColor = vec3(1.0, 0.96, 0.80);
 
 struct Light {
@@ -159,7 +159,6 @@ vec3 randomPointOnLight() {
     );
 
 }
-
 
 bool hitQuad(Ray ray, vec3 minP, vec3 maxP, vec3 normal, vec3 color, bool isLight, inout HitInfo closest) {
     
@@ -544,6 +543,7 @@ vec3 tracePath(Ray ray) {
 
     for (int bounce = 0; bounce < MAX_BOUNCES; bounce++) {
 
+        
         HitInfo hit;
         if (!hitScene(ray, hit)) break;
 
@@ -569,6 +569,22 @@ vec3 tracePath(Ray ray) {
         vec3 hitPoint = ray.origin + hit.t * ray.dir + hit.normal * 0.001;
         vec3 hitNormal = hit.normal;
         vec3 hitColor = hit.color;
+
+        
+        if (hitNormal.y > 0.8) { 
+           
+            float rugNoise = fract(sin(dot(floor(hitPoint.xz * 40.0), vec2(127.1, 311.7))) * 43758.5453);
+            
+            float stains = fract(sin(dot(floor(hitPoint.xz * 1.5), vec2(12.9898, 78.233))) * 43758.5453);
+            
+            hitColor *= mix(0.7, 1.1, rugNoise);
+            hitColor *= mix(0.65, 1.0, stains);
+        } else {
+        
+            float n = fract(sin(dot(floor(hitPoint.xz * 20.0), vec2(127.1, 311.7))) * 43758.5453);
+            hitColor *= 0.9 + 0.2 * n;
+            
+        }
 
         if(pc.useNEE == 1){
 
