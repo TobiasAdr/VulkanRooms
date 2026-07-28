@@ -80,6 +80,7 @@ const vec3 lightMin = vec3(0.86, 1.99, 0.2);
 const vec3 lightMax = vec3( 1.24, 1.99, 0.6);
 
 const vec3 backRoomsWall = vec3(0.86, 0.78, 0.29);
+const vec3 backRoomsFloor = vec3(0.42, 0.35, 0.25);
 const vec3 lightColor = vec3(1.0, 0.96, 0.80);
 
 struct Light {
@@ -102,18 +103,14 @@ struct Room {
 
 };
 
-const int MAP_W = 5;
-const int MAP_H = 5;
+const int MAP_W = 3;
+const int MAP_H = 3;
 
-
-const int map[25] = int[](
-    3, 1, 1, 2, 3,
-    6, 4, 2, 0, 0,
-    3, 0, 6, 1, 2,
-    0, 0, 3, 0, 2,
-    6, 1, 2, 6, 5
+const int map[9] = int[](
+    3, 1, 2,
+    6, 0, 3,
+    3, 4, 5
 );
-
 // ------------- RANDOM -------------
 
 uint rngState;
@@ -162,6 +159,7 @@ vec3 randomPointOnLight() {
     );
 
 }
+
 
 bool hitQuad(Ray ray, vec3 minP, vec3 maxP, vec3 normal, vec3 color, bool isLight, inout HitInfo closest) {
     
@@ -232,7 +230,7 @@ bool hitTriangle(Ray ray, Triangle tri, inout HitInfo closest) {
 
     closest.t = t;
     closest.normal = tri.normal.xyz;
-    closest.color = vec3(0.8, 0.8, 0.8);
+    closest.color = vec3(0.45, 0.27, 0.12);
     closest.isLight = false;
     return true;
 }
@@ -370,19 +368,19 @@ bool hitMap(Ray ray, inout HitInfo hit){
 
             if(type == 0){
 
-                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(CELL,0,CELL), vec3(0,1,0),  backRoomsWall, false, hit) || didHit;
+                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(CELL,0,CELL), vec3(0,1,0),  backRoomsFloor, false, hit) || didHit;
                 didHit = hitQuad(ray, o + vec3(0,H,0), o + vec3(CELL,H,CELL), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
 
             } else if(type == 1){
 
-                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(CELL,0,CELL), vec3(0,1,0),  backRoomsWall, false, hit) || didHit;
+                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(CELL,0,CELL), vec3(0,1,0),  backRoomsFloor, false, hit) || didHit;
                 didHit = hitQuad(ray, o + vec3(0,H,0), o + vec3(CELL,H,CELL), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
 
                 didHit = hitQuad(ray, l.minP, l.maxP, vec3(0,-1,0), lightColor, true, hit) || didHit;
 
             }else if(type == 2){
 
-                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(CELL,0,CELL), vec3(0,1,0),  backRoomsWall, false, hit) || didHit;
+                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(CELL,0,CELL), vec3(0,1,0),  backRoomsFloor, false, hit) || didHit;
                 didHit = hitQuad(ray, o + vec3(0,H,0), o + vec3(CELL,H,CELL), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
                 didHit = hitQuad(ray, o + vec3(CELL,0,0), o + vec3(CELL,H,CELL), vec3(-1,0,0), backRoomsWall, false, hit) || didHit; // Right
                 didHit = hitQuad(ray, l.minP, l.maxP, vec3(0,-1,0), lightColor, true, hit) || didHit;
@@ -390,7 +388,7 @@ bool hitMap(Ray ray, inout HitInfo hit){
 
             } else if(type == 3){
 
-                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(CELL,0,CELL), vec3(0,1,0),  backRoomsWall, false, hit) || didHit;
+                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(CELL,0,CELL), vec3(0,1,0),  backRoomsFloor, false, hit) || didHit;
                 didHit = hitQuad(ray, o + vec3(0,H,0), o + vec3(CELL,H,CELL), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
                 didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(0,H,CELL), vec3(1,0,0), backRoomsWall, false, hit) || didHit;  // Left
                 didHit = hitQuad(ray, l.minP, l.maxP, vec3(0,-1,0), lightColor, true, hit) || didHit;
@@ -399,7 +397,7 @@ bool hitMap(Ray ray, inout HitInfo hit){
             } else if(type == 4){
 
 
-                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(CELL,0,CELL), vec3(0,1,0),  backRoomsWall, false, hit) || didHit;
+                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(CELL,0,CELL), vec3(0,1,0),  backRoomsFloor, false, hit) || didHit;
                 didHit = hitQuad(ray, o + vec3(0,H,0), o + vec3(CELL,H,CELL), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
 
                 didHit = hitQuad(ray, l.minP, l.maxP, vec3(0,-1,0), lightColor, true, hit) || didHit;
@@ -407,7 +405,7 @@ bool hitMap(Ray ray, inout HitInfo hit){
 
             } else if(type == 5){
 
-                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(CELL,0,CELL), vec3(0,1,0),  backRoomsWall, false, hit) || didHit;
+                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(CELL,0,CELL), vec3(0,1,0),  backRoomsFloor, false, hit) || didHit;
                 didHit = hitQuad(ray, o + vec3(0,H,0), o + vec3(CELL,H,CELL), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
 
                 didHit = hitQuad(ray, o + vec3(CELL,0,0), o + vec3(CELL,H,CELL), vec3(-1,0,0), backRoomsWall, false, hit) || didHit; // Right
@@ -418,7 +416,7 @@ bool hitMap(Ray ray, inout HitInfo hit){
             else if(type == 6){
 
                 
-                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(CELL,0,CELL), vec3(0,1,0),  backRoomsWall, false, hit) || didHit;
+                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(CELL,0,CELL), vec3(0,1,0),  backRoomsFloor, false, hit) || didHit;
                 didHit = hitQuad(ray, o + vec3(0,H,0), o + vec3(CELL,H,CELL), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
 
                 didHit = hitQuad(ray, o + vec3(0,0,CELL), o + vec3(CELL,H,CELL), vec3(0,0,-1), backRoomsWall, false, hit) || didHit; // Back
@@ -442,9 +440,10 @@ bool hitScene(Ray ray, inout HitInfo hit) {
     gLightCount = 0;
     bool didHit = false;
 
-    didHit = hitCornellBox(ray, hit);
+    //didHit = hitCornellBox(ray, hit);
 
-    //didHit = hitMap(ray, hit);
+    didHit = hitMap(ray, hit);
+    didHit = hitBVH(ray, hit) || didHit;
 
     return didHit;
 
@@ -475,11 +474,12 @@ Ray generateRay(ivec2 pixel, ivec2 size) {
     Ray ray;
     if(pc.useRealLens == 1){
         ray.origin = lensPoint;
+        ray.dir    = normalize(focalPoint - lensPoint);
     }else{
         ray.origin = camera.position.xyz;
+        ray.dir = normalize(camera.forward.xyz + uv.x * camera.right.xyz + uv.y * camera.up.xyz);
     }
-    
-    ray.dir    = normalize(focalPoint - lensPoint);
+
     
     return ray;
 
