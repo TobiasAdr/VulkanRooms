@@ -10,6 +10,8 @@
 #include <stdexcept>
 #include <iostream>
 #include <fstream>
+#include "imgui_impl_vulkan.h"
+#include "imgui_impl_glfw.h"
 
 const int WIDTH  = 800;
 const int HEIGHT = 600;
@@ -69,6 +71,12 @@ protected:
     virtual void cleanup();
 
     void createInstance();
+
+    void createImGuiRenderPass();
+    void createImGuiFramebuffers();
+    void initImGui();
+
+
     void setupDebugMessenger();
     void createSurface();
     void pickPhysicalDevice();
@@ -80,6 +88,10 @@ protected:
     void createSyncObjects();
     void recreateSwapChain();
     void cleanupSwapChain();
+
+    VkRenderPass              imGuiRenderPass;
+    VkDescriptorPool          imGuiDescriptorPool;
+    std::vector<VkFramebuffer> imGuiFramebuffers;
 
     virtual void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) = 0;
     virtual void drawFrame();

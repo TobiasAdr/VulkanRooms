@@ -3,8 +3,6 @@
 //#define FURNITURE
 #define BOX
 
-#define useNEE
-
 struct Triangle {
     vec4 v0;
     vec4 v1;
@@ -49,9 +47,11 @@ layout(local_size_x = 8, local_size_y = 8) in;
 layout(rgba32f, set = 0, binding = 0) uniform image2D outImage;
 
 layout(push_constant) uniform PushConstants {
-
-    uint frameCount;
-
+    uint  frameCount;
+    uint  useNEE;
+    uint  useRealLens;
+    float focalLength;
+    float apertureSize;
 } pc;
 
 
@@ -105,13 +105,13 @@ struct Room {
 const int MAP_W = 5;
 const int MAP_H = 5;
 
-// 1- wall, 0- nothing
+
 const int map[25] = int[](
-    3, 1, 1, 1, 2,
-    3, 0, 0, 0, 2,
-    3, 0, 0, 0, 2,
-    3, 0, 0, 0, 2,
-    6, 4, 4, 4, 5
+    3, 1, 1, 2, 3,
+    6, 4, 2, 0, 0,
+    3, 0, 6, 1, 2,
+    0, 0, 3, 0, 2,
+    6, 1, 2, 6, 5
 );
 
 // ------------- RANDOM -------------
@@ -316,7 +316,17 @@ bool hitCornellBox(Ray ray, inout HitInfo hit){
     didHit = hitQuad(ray, vec3( 1, 0,0), vec3( 1, 2, 2), vec3(-1,0,0),  backRoomsWall, false, hit) || didHit; // Right
     didHit = hitQuad(ray, vec3(-1, 0,0), vec3( 1, 2, 2), vec3(0, 0,-1), backRoomsWall, false, hit) || didHit; // Back
 
-    didHit = hitQuad(ray, lightMin, lightMax, vec3(0,-1,0), lightColor, true, hit) || didHit; // Light
+    vec3 lightMinBox = vec3(-0.24, 1.99, 0.2);
+    vec3 lightMaxBox = vec3(0.24, 1.99, 0.6);
+
+    Light l;
+    l.minP = lightMinBox;
+    l.maxP = lightMaxBox;
+    gLights[gLightCount++] = l;
+
+    didHit = hitQuad(ray, lightMinBox, lightMaxBox, vec3(0,-1,0), lightColor, true, hit) || didHit; // Light
+
+    didHit = hitBVH(ray, hit) || didHit;
 
     vec3 boxMin = vec3(-0.4, 0.0, 0.33);
     vec3 boxMax = vec3( 0.0, 0.6, 0.53);
@@ -343,8 +353,7 @@ bool hitMap(Ray ray, inout HitInfo hit){
 
     bool didHit = false;
 
-    // Depth Height Length
-    int CELL =2;
+    int CELL =4;
     int H = 2;
 
     for(int row = 0; row < MAP_W; row++){
@@ -368,10 +377,6 @@ bool hitMap(Ray ray, inout HitInfo hit){
 
                 didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(CELL,0,CELL), vec3(0,1,0),  backRoomsWall, false, hit) || didHit;
                 didHit = hitQuad(ray, o + vec3(0,H,0), o + vec3(CELL,H,CELL), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
-                //didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(0,H,CELL), vec3(1,0,0), backRoomsWall, false, hit) || didHit;  // Left
-                //didHit = hitQuad(ray, o + vec3(CELL,0,0), o + vec3(CELL,H,CELL), vec3(-1,0,0), backRoomsWall, false, hit) || didHit; // Right
-                //didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(CELL,H,0),  vec3(0,0,1),   backRoomsWall, false, hit) || didHit;  // Front
-                //didHit = hitQuad(ray, o + vec3(0,0,CELL), o + vec3(CELL,H,CELL), vec3(0,0,-1), backRoomsWall, false, hit) || didHit; // Back
 
                 didHit = hitQuad(ray, l.minP, l.maxP, vec3(0,-1,0), lightColor, true, hit) || didHit;
 
@@ -381,7 +386,6 @@ bool hitMap(Ray ray, inout HitInfo hit){
                 didHit = hitQuad(ray, o + vec3(0,H,0), o + vec3(CELL,H,CELL), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
                 didHit = hitQuad(ray, o + vec3(CELL,0,0), o + vec3(CELL,H,CELL), vec3(-1,0,0), backRoomsWall, false, hit) || didHit; // Right
                 didHit = hitQuad(ray, l.minP, l.maxP, vec3(0,-1,0), lightColor, true, hit) || didHit;
-                //didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(0,H,CELL), vec3(1,0,0), backRoomsWall, false, hit) || didHit;  // Left
 
 
             } else if(type == 3){
@@ -424,9 +428,6 @@ bool hitMap(Ray ray, inout HitInfo hit){
             }
 
 
-
-
-
         }   
     }
 
@@ -441,9 +442,9 @@ bool hitScene(Ray ray, inout HitInfo hit) {
     gLightCount = 0;
     bool didHit = false;
 
-    //didHit = hitCornellBox(ray, hit);
+    didHit = hitCornellBox(ray, hit);
 
-    didHit = hitMap(ray, hit);
+    //didHit = hitMap(ray, hit);
 
     return didHit;
 
@@ -454,12 +455,32 @@ Ray generateRay(ivec2 pixel, ivec2 size) {
     vec2 uv = (vec2(pixel) + 0.5) / vec2(size) * 2.0 - 1.0;
     uv.x *= float(size.x) / float(size.y);
     uv.y = -uv.y;
- 
-    vec3 cameraPos = vec3(0.0, 1.0, -1.0);
+
+    float focalLength  = pc.focalLength;
+    float apertureSize = pc.apertureSize;
+
+    vec3 focalPoint = camera.position.xyz
+                    + camera.forward.xyz * focalLength
+                    + uv.x * camera.right.xyz * focalLength
+                    + uv.y * camera.up.xyz    * focalLength;
+
+    float angle  = rand() * 2.0 * 3.14159265;
+    float radius = sqrt(rand()) * apertureSize;
+    vec2  disk   = vec2(cos(angle), sin(angle)) * radius;
+
+    vec3 lensPoint = camera.position.xyz
+                   + disk.x * camera.right.xyz
+                   + disk.y * camera.up.xyz;
 
     Ray ray;
-    ray.origin = camera.position.xyz;
-    ray.dir    = normalize(camera.forward.xyz + uv.x * camera.right.xyz + uv.y * camera.up.xyz);
+    if(pc.useRealLens == 1){
+        ray.origin = lensPoint;
+    }else{
+        ray.origin = camera.position.xyz;
+    }
+    
+    ray.dir    = normalize(focalPoint - lensPoint);
+    
     return ray;
 
 }
@@ -527,33 +548,33 @@ vec3 tracePath(Ray ray) {
         if (!hitScene(ray, hit)) break;
 
 
-        #ifdef useNEE
-        if (hit.isLight) {
-            if (bounce == 0) {
-                color += throughput * vec3(15.0);
+        if(pc.useNEE == 1){
+            if (hit.isLight) {
+                if (bounce == 0) {
+                    color += throughput * vec3(15.0);
+                }
+                break;
             }
-            break;
         }
-        #endif
 
-        #ifndef useNEE
-        if(hit.isLight){
+        if(pc.useNEE == 0){
+            if(hit.isLight){
 
-            color += throughput * vec3(15.0);
-            break;
+                color += throughput * vec3(15.0);
+                break;
 
+            }
         }
-        #endif
 
         vec3 hitPoint = ray.origin + hit.t * ray.dir + hit.normal * 0.001;
         vec3 hitNormal = hit.normal;
         vec3 hitColor = hit.color;
 
-        #ifdef useNEE
+        if(pc.useNEE == 1){
 
-        color += throughput * NEE(hitPoint, hitNormal, hitColor);
+            color += throughput * NEE(hitPoint, hitNormal, hitColor);
         
-        #endif
+        }
 
         ray.origin = hitPoint + hitNormal * 0.001;
         ray.dir    = randomHemisphere(hitNormal);
@@ -579,7 +600,7 @@ void main() {
 
     if (pixel.x >= size.x || pixel.y >= size.y) return;
 
-    const int SAMPLES = 4;
+    const int SAMPLES = 6;
     vec3 col = vec3(0.0);
 
     for (int s = 0; s < SAMPLES; s++) {

@@ -2,12 +2,19 @@
 #include "../VulkanApp.h"
 #include "BVH.h"
 #include "../scene/MeshLoader.h"
+#include "imgui_impl_vulkan.h"
+#include "imgui_impl_glfw.h"
 
 
 struct PushConstants {
 
 
     uint32_t frameCount = 0;
+    uint32_t useNEE;
+    uint32_t useRealLens;
+    float focalLength;
+    float apertureSize;
+
 
 };
 
