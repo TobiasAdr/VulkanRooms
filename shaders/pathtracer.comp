@@ -50,6 +50,8 @@ layout(push_constant) uniform PushConstants {
     uint  frameCount;
     uint  useNEE;
     uint  useRealLens;
+    uint  useTAA;
+    uint samples;
     float focalLength;
     float apertureSize;
 } pc;
@@ -76,6 +78,8 @@ layout(binding = 3) uniform CameraUBO {
 
 } camera;
 
+layout(rgba32f, set = 0, binding = 4) uniform image2D previousFrame;
+
 const vec3 lightMin = vec3(0.86, 1.99, 0.2);
 const vec3 lightMax = vec3( 1.24, 1.99, 0.6);
 
@@ -91,7 +95,6 @@ struct Light {
 #define MAX_LIGHTS 64
 Light gLights[MAX_LIGHTS];
 int gLightCount = 0;
-
 
 
 // ------------- LABYRINTH ----------
@@ -439,9 +442,9 @@ bool hitScene(Ray ray, inout HitInfo hit) {
     gLightCount = 0;
     bool didHit = false;
 
-    //didHit = hitCornellBox(ray, hit);
+    didHit = hitCornellBox(ray, hit);
 
-    didHit = hitMap(ray, hit);
+    //didHit = hitMap(ray, hit);
     didHit = hitBVH(ray, hit) || didHit;
 
     return didHit;
@@ -616,21 +619,37 @@ void main() {
 
     if (pixel.x >= size.x || pixel.y >= size.y) return;
 
-    const int SAMPLES = 6;
     vec3 col = vec3(0.0);
 
-    for (int s = 0; s < SAMPLES; s++) {
-
+    for (int s = 0; s < int(pc.samples); s++) {
         Ray ray = generateRay(pixel, size);
         col += tracePath(ray);
+    }
+    col /= float(pc.samples);
+
+    // Load the previous frame
+    vec3 previous = imageLoad(previousFrame, pixel).rgb;
+    
+    // 90% previous, 10% new image
+    float blend = 0.05;
+
+    vec3 result;
+
+    if (pc.frameCount <= 1) {
+    
+        result = col;
+    
+    } else if (pc.useTAA == 1) {
+        
+        result = mix(previous, col, 0.1);
+    
+    } else {
+        
+        vec3 oldColor = imageLoad(outImage, pixel).rgb;
+        result = (oldColor * float(pc.frameCount) + col) / float(pc.frameCount + 1);
     
     }
 
-    col /= float(SAMPLES);
-
-    vec3 oldColor    = imageLoad(outImage, pixel).rgb;
-    vec3 accumulated = (oldColor * float(pc.frameCount) + col) / float(pc.frameCount + 1);
-
-    imageStore(outImage, pixel, vec4(accumulated, 1.0));
+    imageStore(outImage, pixel, vec4(result, 1.0));
 
 }

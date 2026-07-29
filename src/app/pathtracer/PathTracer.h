@@ -12,9 +12,10 @@ struct PushConstants {
     uint32_t frameCount = 0;
     uint32_t useNEE;
     uint32_t useRealLens;
+    uint32_t useTAA;
+    uint32_t samples;
     float focalLength;
     float apertureSize;
-
 
 };
 
@@ -54,6 +55,9 @@ public:
 
 protected:
 
+
+    bool firstFrame = true;
+
     // Camera
     Camera cam;
     VkBuffer cameraBuffer = VK_NULL_HANDLE;
@@ -88,6 +92,13 @@ protected:
     VkComputePipelineCreateInfo pipelineInfo{};
     VkShaderModule compModule;
 
+
+    // TAA
+
+    VkImage previousImage;
+    VkDeviceMemory previousImageMemory;
+    VkImageView previousImageView;
+
     uint32_t frameCount = 0;
 
     PushConstants pc;
@@ -106,6 +117,10 @@ protected:
     void createLayoutInfo();
     void createPipelineInfo();
     void createComputePipeline();
+    
+    // TAA
+    void createPreviousImage();
+    void transitionImageLayoutImmediate(VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout);
 
     void loadMesh(const std::string& filename);
     void createTriangleBuffer(const std::vector<Triangle>& triangles);
