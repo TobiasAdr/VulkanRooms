@@ -83,9 +83,13 @@ layout(rgba32f, set = 0, binding = 4) uniform image2D previousFrame;
 const vec3 lightMin = vec3(0.86, 1.99, 0.2);
 const vec3 lightMax = vec3( 1.24, 1.99, 0.6);
 
-const vec3 backRoomsWall = vec3(0.86, 0.78, 0.29);
-const vec3 backRoomsFloor = vec3(0.52, 0.45, 0.18);
-const vec3 lightColor = vec3(1.0, 0.96, 0.80);
+const float CELL_SIZE = 4.0;
+const float ROOM_H    = 2.2;
+const float LIGHT_SIZE = 1.2;
+
+const vec3 backRoomsWall  = vec3(0.72, 0.65, 0.25);
+const vec3 backRoomsFloor = vec3(0.58, 0.48, 0.22);
+const vec3 lightColor     = vec3(1.0, 0.98, 0.88);
 
 struct Light {
     vec3 minP;
@@ -350,90 +354,51 @@ bool hitCornellBox(Ray ray, inout HitInfo hit){
 }
 
 bool hitMap(Ray ray, inout HitInfo hit){
-
     bool didHit = false;
 
-    int CELL =4;
-    int H = 2;
-
     for(int row = 0; row < MAP_W; row++){
-
         for(int col = 0; col < MAP_H; col++){
-            vec3 o = vec3(float(col) * CELL, 0.0, float(row) * CELL);   
-
-            Light l;
-            l.minP = lightMin + o;
-            l.maxP = lightMax + o;
-            gLights[gLightCount++] = l;
-
+            vec3 o = vec3(float(col) * CELL_SIZE, 0.0, float(row) * CELL_SIZE);   
             int type = map[row * MAP_W + col];
 
-            if(type == 0){
+            didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(CELL_SIZE,0,CELL_SIZE), vec3(0,1,0), backRoomsFloor, false, hit) || didHit;
 
-                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(CELL,0,CELL), vec3(0,1,0),  backRoomsFloor, false, hit) || didHit;
-                didHit = hitQuad(ray, o + vec3(0,H,0), o + vec3(CELL,H,CELL), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
+            if(type == 1) {
+                float margin = (CELL_SIZE - LIGHT_SIZE) * 0.5;
+                vec3 lMin = o + vec3(margin, ROOM_H, margin);
+                vec3 lMax = o + vec3(margin + LIGHT_SIZE, ROOM_H, margin + LIGHT_SIZE);
 
-            } else if(type == 1){
+                Light l;
+                l.minP = lMin;
+                l.maxP = lMax;
+                gLights[gLightCount++] = l;
 
-                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(CELL,0,CELL), vec3(0,1,0),  backRoomsFloor, false, hit) || didHit;
-                didHit = hitQuad(ray, o + vec3(0,H,0), o + vec3(CELL,H,CELL), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
+                didHit = hitQuad(ray, lMin, lMax, vec3(0,-1,0), lightColor, true, hit) || didHit;
 
-                didHit = hitQuad(ray, l.minP, l.maxP, vec3(0,-1,0), lightColor, true, hit) || didHit;
+                didHit = hitQuad(ray, o + vec3(0, ROOM_H, 0), o + vec3(CELL_SIZE, ROOM_H, margin), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
+                didHit = hitQuad(ray, o + vec3(0, ROOM_H, margin + LIGHT_SIZE), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
+                didHit = hitQuad(ray, o + vec3(0, ROOM_H, margin), o + vec3(margin, ROOM_H, margin + LIGHT_SIZE), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
+                didHit = hitQuad(ray, o + vec3(margin + LIGHT_SIZE, ROOM_H, margin), o + vec3(CELL_SIZE, ROOM_H, margin + LIGHT_SIZE), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
+            } else {
+                didHit = hitQuad(ray, o + vec3(0, ROOM_H, 0), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
+            }
 
-            }else if(type == 2){
-
-                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(CELL,0,CELL), vec3(0,1,0),  backRoomsFloor, false, hit) || didHit;
-                didHit = hitQuad(ray, o + vec3(0,H,0), o + vec3(CELL,H,CELL), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
-                didHit = hitQuad(ray, o + vec3(CELL,0,0), o + vec3(CELL,H,CELL), vec3(-1,0,0), backRoomsWall, false, hit) || didHit; // Right
-                didHit = hitQuad(ray, l.minP, l.maxP, vec3(0,-1,0), lightColor, true, hit) || didHit;
-
-
+            if(type == 2){
+                didHit = hitQuad(ray, o + vec3(CELL_SIZE,0,0), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(-1,0,0), backRoomsWall, false, hit) || didHit;
             } else if(type == 3){
-
-                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(CELL,0,CELL), vec3(0,1,0),  backRoomsFloor, false, hit) || didHit;
-                didHit = hitQuad(ray, o + vec3(0,H,0), o + vec3(CELL,H,CELL), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
-                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(0,H,CELL), vec3(1,0,0), backRoomsWall, false, hit) || didHit;  // Left
-                didHit = hitQuad(ray, l.minP, l.maxP, vec3(0,-1,0), lightColor, true, hit) || didHit;
-
-
+                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(0, ROOM_H, CELL_SIZE), vec3(1,0,0), backRoomsWall, false, hit) || didHit;
             } else if(type == 4){
-
-
-                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(CELL,0,CELL), vec3(0,1,0),  backRoomsFloor, false, hit) || didHit;
-                didHit = hitQuad(ray, o + vec3(0,H,0), o + vec3(CELL,H,CELL), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
-
-                didHit = hitQuad(ray, l.minP, l.maxP, vec3(0,-1,0), lightColor, true, hit) || didHit;
-                didHit = hitQuad(ray, o + vec3(0,0,CELL), o + vec3(CELL,H,CELL), vec3(0,0,-1), backRoomsWall, false, hit) || didHit; // Back
-
+                didHit = hitQuad(ray, o + vec3(0,0,CELL_SIZE), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(0,0,-1), backRoomsWall, false, hit) || didHit;
             } else if(type == 5){
-
-                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(CELL,0,CELL), vec3(0,1,0),  backRoomsFloor, false, hit) || didHit;
-                didHit = hitQuad(ray, o + vec3(0,H,0), o + vec3(CELL,H,CELL), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
-
-                didHit = hitQuad(ray, o + vec3(CELL,0,0), o + vec3(CELL,H,CELL), vec3(-1,0,0), backRoomsWall, false, hit) || didHit; // Right
-                didHit = hitQuad(ray, o + vec3(0,0,CELL), o + vec3(CELL,H,CELL), vec3(0,0,-1), backRoomsWall, false, hit) || didHit; // Back
-                didHit = hitQuad(ray, l.minP, l.maxP, vec3(0,-1,0), lightColor, true, hit) || didHit;
-
+                didHit = hitQuad(ray, o + vec3(CELL_SIZE,0,0), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(-1,0,0), backRoomsWall, false, hit) || didHit;
+                didHit = hitQuad(ray, o + vec3(0,0,CELL_SIZE), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(0,0,-1), backRoomsWall, false, hit) || didHit;
+            } else if(type == 6){
+                didHit = hitQuad(ray, o + vec3(0,0,CELL_SIZE), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(0,0,-1), backRoomsWall, false, hit) || didHit;
+                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(0, ROOM_H, CELL_SIZE), vec3(1,0,0), backRoomsWall, false, hit) || didHit;
             }
-            else if(type == 6){
-
-                
-                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(CELL,0,CELL), vec3(0,1,0),  backRoomsFloor, false, hit) || didHit;
-                didHit = hitQuad(ray, o + vec3(0,H,0), o + vec3(CELL,H,CELL), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
-
-                didHit = hitQuad(ray, o + vec3(0,0,CELL), o + vec3(CELL,H,CELL), vec3(0,0,-1), backRoomsWall, false, hit) || didHit; // Back
-                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(0,H,CELL), vec3(1,0,0), backRoomsWall, false, hit) || didHit;  // Left
-                didHit = hitQuad(ray, l.minP, l.maxP, vec3(0,-1,0), lightColor, true, hit) || didHit;
-
-            }
-
-
         }   
     }
-
     return didHit;
-
-
 }
 
 bool hitScene(Ray ray, inout HitInfo hit) {
@@ -442,9 +407,9 @@ bool hitScene(Ray ray, inout HitInfo hit) {
     gLightCount = 0;
     bool didHit = false;
 
-    didHit = hitCornellBox(ray, hit);
+    //didHit = hitCornellBox(ray, hit);
 
-    //didHit = hitMap(ray, hit);
+    didHit = hitMap(ray, hit);
     didHit = hitBVH(ray, hit) || didHit;
 
     return didHit;
@@ -542,7 +507,7 @@ vec3 tracePath(Ray ray) {
     vec3 throughput = vec3(1.0);
     vec3 color      = vec3(0.0);
 
-    const int MAX_BOUNCES = 4;
+    const int MAX_BOUNCES = 2;
 
     for (int bounce = 0; bounce < MAX_BOUNCES; bounce++) {
 
@@ -612,44 +577,27 @@ vec3 tracePath(Ray ray) {
 void main() {
 
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
-    
+
     ivec2 size  = imageSize(outImage);
 
     rngState = uint(pixel.x) * 1973u + uint(pixel.y) * 9277u + pc.frameCount * 26699u + 1u;
 
     if (pixel.x >= size.x || pixel.y >= size.y) return;
 
+    const int SAMPLES = 1;
     vec3 col = vec3(0.0);
 
-    for (int s = 0; s < int(pc.samples); s++) {
+    for (int s = 0; s < SAMPLES; s++) {
+
         Ray ray = generateRay(pixel, size);
         col += tracePath(ray);
-    }
-    col /= float(pc.samples);
 
-    // Load the previous frame
-    vec3 previous = imageLoad(previousFrame, pixel).rgb;
-    
-    // 90% previous, 10% new image
-    float blend = 0.05;
-
-    vec3 result;
-
-    if (pc.frameCount <= 1) {
-    
-        result = col;
-    
-    } else if (pc.useTAA == 1) {
-        
-        result = mix(previous, col, 0.1);
-    
-    } else {
-        
-        vec3 oldColor = imageLoad(outImage, pixel).rgb;
-        result = (oldColor * float(pc.frameCount) + col) / float(pc.frameCount + 1);
-    
     }
 
-    imageStore(outImage, pixel, vec4(result, 1.0));
+    col /= float(SAMPLES);
 
+    vec3 oldColor    = imageLoad(outImage, pixel).rgb;
+    vec3 accumulated = (oldColor * float(pc.frameCount) + col) / float(pc.frameCount + 1);
+
+    imageStore(outImage, pixel, vec4(accumulated, 1.0));
 }
