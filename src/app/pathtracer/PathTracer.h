@@ -9,6 +9,7 @@
 struct PushConstants {
 
 
+    uint32_t jittering = 0;
     uint32_t frameCount = 0;
     uint32_t useNEE;
     uint32_t useRealLens;

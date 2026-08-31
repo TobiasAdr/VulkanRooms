@@ -313,6 +313,7 @@ void PathTracer::createComputeDescriptors() {
 
 void PathTracer::pushConstants() {
 
+    pc.jittering = 0;
     pc.frameCount   = 0;
     pc.useNEE       = 1;
     pc.useRealLens  = 0;
@@ -749,6 +750,14 @@ void PathTracer::drawFrame() {
     ImGui::NewFrame();
 
     ImGui::Begin("Settings");
+
+    bool jittering = pc.jittering;
+    if(ImGui::Checkbox("Jittering", &jittering)){
+
+        pc.jittering = jittering ? 1 : 0;
+        pc.frameCount = 0;
+
+    }
 
     bool nee = pc.useNEE;
     if (ImGui::Checkbox("NEE", &nee)) {
