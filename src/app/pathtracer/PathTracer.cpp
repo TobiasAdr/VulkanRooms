@@ -298,8 +298,22 @@ void PathTracer::createWrites(){
 }
 
 void PathTracer::updateCameraBuffer() {
-    CameraUBO data = cam.toUBO();
+    static Camera prevCam = cam; 
+
+    CameraUBO data;
+    data.position = glm::vec4(cam.pos, 0);
+    data.forward  = glm::vec4(cam.forward(), 0);
+    data.right    = glm::vec4(cam.right(), 0);
+    data.up       = glm::vec4(cam.up(), 0);
+
+    data.prevPosition = glm::vec4(prevCam.pos, 0);
+    data.prevForward  = glm::vec4(prevCam.forward(), 0);
+    data.prevRight    = glm::vec4(prevCam.right(), 0);
+    data.prevUp       = glm::vec4(prevCam.up(), 0);
+
     memcpy(cameraMapped, &data, sizeof(CameraUBO));
+
+    prevCam = cam; 
 }
 
 
@@ -365,7 +379,7 @@ void PathTracer::loadMesh(const std::string& filename) {
     MeshLoader loader;
     
     loader.load("../assets/chair.obj", glm::vec3(2.0f, 0.f, 0.5f), .5f);
-    loader.load("../assets/chair.obj", glm::vec3(4.0f, 0.f, 4.f), .5f);
+   /* loader.load("../assets/chair.obj", glm::vec3(4.0f, 0.f, 4.f), .5f);
     loader.load("../assets/chair.obj", glm::vec3(7.0f, 0.f, 1.f), .5f);
     loader.load("../assets/chair.obj", glm::vec3(7.0f, 0.f, 8.f), .5f);
     loader.load("../assets/chair.obj", glm::vec3(9.0f, 0.f, 3.f), .5f);
@@ -374,7 +388,7 @@ void PathTracer::loadMesh(const std::string& filename) {
     loader.load("../assets/smalltable.obj", glm::vec3(7.0f, 0.f, 4.f), .5f);
     
     loader.load("../assets/bunny.obj", glm::vec3(4.f, 0.3f, 3.f), 5.0f);
-
+*/
     BVH bvh;
     bvh.build(loader.triangles);
 
@@ -696,7 +710,9 @@ void PathTracer::moveCamera(){
     if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) { cam.pos -= cam.right()   * speed; moved = true; }
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) { cam.pos += cam.right()   * speed; moved = true; }
 
-    if (moved) pc.frameCount = 0;
+    if(!pc.useTAA){
+        if (moved) pc.frameCount = 0;
+    }
 
 }
 
@@ -788,8 +804,6 @@ void PathTracer::drawFrame() {
 
     ImGui::End();
     ImGui::Render();
-
-
 
     VulkanApp::drawFrame();
 }

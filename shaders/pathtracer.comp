@@ -43,7 +43,6 @@ struct Quad {
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
-
 layout(rgba32f, set = 0, binding = 0) uniform image2D outImage;
 
 layout(push_constant) uniform PushConstants {
@@ -71,12 +70,14 @@ layout(binding = 2) readonly buffer BVHBuffer {
 } bvhBuffer;
 
 layout(binding = 3) uniform CameraUBO {
-
     vec4 position;
     vec4 forward;
     vec4 right;
     vec4 up;
-
+    vec4 prevPosition;
+    vec4 prevForward;
+    vec4 prevRight;
+    vec4 prevUp;
 } camera;
 
 layout(rgba32f, set = 0, binding = 4) uniform image2D previousFrame;
@@ -92,6 +93,9 @@ const vec3 backRoomsWall  = vec3(0.72, 0.65, 0.25);
 const vec3 backRoomsFloor = vec3(0.58, 0.48, 0.22);
 const vec3 lightColor     = vec3(1.0, 0.98, 0.88);
 
+const float HISTORY_WEIGHT   = 0.9;   // How much of the previous frame should be used
+const float DEPTH_REJECT_TOL = 0.05;
+
 struct Light {
     vec3 minP;
     vec3 maxP;
@@ -101,23 +105,30 @@ struct Light {
 Light gLights[MAX_LIGHTS];
 int gLightCount = 0;
 
-
 // ------------- LABYRINTH ----------
 
 struct Room {
 
     vec3 min;
-    vec3 max;
+    vec3 max; 
 
 };
 
-const int MAP_W = 3;
-const int MAP_H = 3;
+const int WALL_RIGHT = 1;
+const int WALL_LEFT  = 2;
+const int WALL_FAR   = 4;
+const int ROOM_LIGHT = 8;
 
-const int map[9] = int[](
-    3, 1, 2,
-    6, 0, 3,
-    3, 4, 5
+const int MAP_W = 6;
+const int MAP_H = 6;
+
+const int map[36] = int[](
+    WALL_LEFT | WALL_FAR, WALL_FAR, WALL_FAR | ROOM_LIGHT, WALL_FAR, WALL_FAR, WALL_RIGHT,
+    WALL_LEFT, WALL_FAR, WALL_FAR, WALL_FAR, WALL_FAR | ROOM_LIGHT, WALL_RIGHT | WALL_FAR,
+    WALL_LEFT | WALL_FAR, WALL_FAR, WALL_FAR | ROOM_LIGHT, 0, WALL_FAR, WALL_RIGHT,
+    WALL_LEFT, WALL_FAR | ROOM_LIGHT, WALL_FAR, WALL_FAR, WALL_FAR, WALL_RIGHT | WALL_FAR,
+    WALL_LEFT | WALL_FAR, WALL_FAR, WALL_FAR, WALL_FAR, WALL_FAR, WALL_RIGHT,
+    WALL_LEFT | WALL_FAR, WALL_FAR, WALL_FAR, WALL_FAR | ROOM_LIGHT, WALL_FAR, WALL_RIGHT | WALL_FAR
 );
 // ------------- RANDOM -------------
 
@@ -357,14 +368,21 @@ bool hitCornellBox(Ray ray, inout HitInfo hit){
 bool hitMap(Ray ray, inout HitInfo hit){
     bool didHit = false;
 
-    for(int row = 0; row < MAP_W; row++){
-        for(int col = 0; col < MAP_H; col++){
-            vec3 o = vec3(float(col) * CELL_SIZE, 0.0, float(row) * CELL_SIZE);   
+    for(int row = 0; row < MAP_H; row++){
+        for(int col = 0; col < MAP_W; col++){
+
+            vec3 o = vec3(float(col) * CELL_SIZE, 0.0, float(row) * CELL_SIZE);
             int type = map[row * MAP_W + col];
 
-            didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(CELL_SIZE,0,CELL_SIZE), vec3(0,1,0), backRoomsFloor, false, hit) || didHit;
+            bool hasLight = (type & ROOM_LIGHT) != 0;
+            bool hasRight = (type & WALL_RIGHT) != 0;
+            bool hasLeft  = (type & WALL_LEFT)  != 0;
+            bool hasFar   = (type & WALL_FAR)   != 0;
 
-            if(type == 1) {
+            didHit = hitQuad(ray, o, o + vec3(CELL_SIZE, 0.0, CELL_SIZE), vec3(0,1,0), backRoomsFloor, false, hit) || didHit;
+
+            if(hasLight){
+
                 float margin = (CELL_SIZE - LIGHT_SIZE) * 0.5;
                 vec3 lMin = o + vec3(margin, ROOM_H, margin);
                 vec3 lMax = o + vec3(margin + LIGHT_SIZE, ROOM_H, margin + LIGHT_SIZE);
@@ -380,28 +398,29 @@ bool hitMap(Ray ray, inout HitInfo hit){
                 didHit = hitQuad(ray, o + vec3(0, ROOM_H, margin + LIGHT_SIZE), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
                 didHit = hitQuad(ray, o + vec3(0, ROOM_H, margin), o + vec3(margin, ROOM_H, margin + LIGHT_SIZE), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
                 didHit = hitQuad(ray, o + vec3(margin + LIGHT_SIZE, ROOM_H, margin), o + vec3(CELL_SIZE, ROOM_H, margin + LIGHT_SIZE), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
+
             } else {
+
                 didHit = hitQuad(ray, o + vec3(0, ROOM_H, 0), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
+
             }
 
-            if(type == 2){
+            if(hasRight){
                 didHit = hitQuad(ray, o + vec3(CELL_SIZE,0,0), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(-1,0,0), backRoomsWall, false, hit) || didHit;
-            } else if(type == 3){
-                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(0, ROOM_H, CELL_SIZE), vec3(1,0,0), backRoomsWall, false, hit) || didHit;
-            } else if(type == 4){
-                didHit = hitQuad(ray, o + vec3(0,0,CELL_SIZE), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(0,0,-1), backRoomsWall, false, hit) || didHit;
-            } else if(type == 5){
-                didHit = hitQuad(ray, o + vec3(CELL_SIZE,0,0), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(-1,0,0), backRoomsWall, false, hit) || didHit;
-                didHit = hitQuad(ray, o + vec3(0,0,CELL_SIZE), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(0,0,-1), backRoomsWall, false, hit) || didHit;
-            } else if(type == 6){
-                didHit = hitQuad(ray, o + vec3(0,0,CELL_SIZE), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(0,0,-1), backRoomsWall, false, hit) || didHit;
+            }
+
+            if(hasLeft){
                 didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(0, ROOM_H, CELL_SIZE), vec3(1,0,0), backRoomsWall, false, hit) || didHit;
             }
-        }   
+
+            if(hasFar){
+                didHit = hitQuad(ray, o + vec3(0,0,CELL_SIZE), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(0,0,-1), backRoomsWall, false, hit) || didHit;
+            }
+
+        }
     }
     return didHit;
 }
-
 bool hitScene(Ray ray, inout HitInfo hit) {
 
     hit.t = 1e30;
@@ -427,7 +446,7 @@ Ray generateRay(ivec2 pixel, ivec2 size) {
     else{
         uv = (vec2(pixel) + 0.5) / vec2(size) * 2.0 - 1.0;
     }
-    //vec2 uv = (vec2(pixel) + 0.5 + jitter) / vec2(size) * 2.0 - 1.0;
+    
     uv.x *= float(size.x) / float(size.y);
     uv.y = -uv.y;
 
@@ -552,7 +571,7 @@ vec3 tracePath(Ray ray) {
             
             float stains = fract(sin(dot(floor(hitPoint.xz * 1.5), vec2(12.9898, 78.233))) * 43758.5453);
             
-            hitColor *= mix(0.7, 1.1, rugNoise);
+            //hitColor *= mix(0.7, 1.1, rugNoise);
             hitColor *= mix(0.65, 1.0, stains);
 
         } else {
@@ -582,6 +601,60 @@ vec3 tracePath(Ray ray) {
 
 }
 
+// ---------------- TEMPORAL REPROJECTION -----------------
+
+// Returns which pixel the world point was represented by on the previous camera. 
+vec3 reprojectToPrevPixel(vec3 worldPos, ivec2 size){
+
+    vec3 relativePosition = worldPos - camera.prevPosition.xyz;
+
+    // How deep the point is relative to the old camera. 
+    float t = dot(relativePosition, camera.prevForward.xyz);
+    if (t <= 0.001) return vec3(-1.0, -1.0, 0.0);
+
+    float aspect = float(size.x) / float(size.y);
+
+    // How far the point is projected in the x and y plane. 
+    float rawX = dot(relativePosition, camera.prevRight.xyz) / t / aspect;
+    float rawY = -dot(relativePosition, camera.prevUp.xyz) / t;
+
+    vec2 screenUV = vec2(rawX, rawY) * 0.5 + 0.5;
+    vec2 pixelCoord = screenUV * vec2(size) - 0.5;
+    
+    return vec3(pixelCoord, t);
+
+}
+
+// Bilinear sampling
+vec4 sampleHistory(vec2 pixelCoord, ivec2 size){
+
+    if (pixelCoord.x < 0.0 || pixelCoord.y < 0.0 ||
+        pixelCoord.x > float(size.x - 1) || pixelCoord.y > float(size.y - 1)) {
+        return vec4(-1.0);
+    }
+
+    ivec2 p0 = ivec2(floor(pixelCoord));
+    vec2  f  = fract(pixelCoord);
+
+    // Retrives 4 pixels
+    ivec2 p00 = clamp(p0,              ivec2(0), size - 1);
+    ivec2 p10 = clamp(p0 + ivec2(1,0), ivec2(0), size - 1);
+    ivec2 p01 = clamp(p0 + ivec2(0,1), ivec2(0), size - 1);
+    ivec2 p11 = clamp(p0 + ivec2(1,1), ivec2(0), size - 1);
+
+    // the colors of the four pixels
+    vec4 c00 = imageLoad(previousFrame, p00);
+    vec4 c10 = imageLoad(previousFrame, p10);
+    vec4 c01 = imageLoad(previousFrame, p01);
+    vec4 c11 = imageLoad(previousFrame, p11);
+
+    vec4 top    = mix(c00, c10, f.x);
+    vec4 bottom = mix(c01, c11, f.x);
+    
+    return mix(top, bottom, f.y);
+
+}
+
 void main() {
 
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
@@ -592,7 +665,25 @@ void main() {
 
     if (pixel.x >= size.x || pixel.y >= size.y) return;
 
+    // Center of pixel
+    vec2 centerUV = (vec2(pixel) + 0.5) / vec2(size) * 2.0 - 1.0;
+    centerUV.x *= float(size.x) / float(size.y);
+    centerUV.y = -centerUV.y;
+
+    // Temporal projection ray
+    Ray primaryRay;
+    primaryRay.origin = camera.position.xyz;
+    primaryRay.dir = normalize(camera.forward.xyz + centerUV.x * camera.right.xyz + centerUV.y * camera.up.xyz);
+
+    HitInfo primaryHit;
+    bool primaryDidHit = hitScene(primaryRay, primaryHit);
+    vec3 primaryWorldPos = primaryRay.origin + primaryHit.t * primaryRay.dir; 
+    float currentDepth    = primaryDidHit ? dot(primaryWorldPos - camera.position.xyz, camera.forward.xyz) : 1e30;
+
+
+
     const int SAMPLES = 1;
+
     vec3 col = vec3(0.0);
 
     for (int s = 0; s < pc.samples; s++) {
@@ -602,10 +693,44 @@ void main() {
 
     }
 
-    col /= float(pc.samples);
+    col /= float(pc.samples);   
 
-    vec3 oldColor    = imageLoad(outImage, pixel).rgb;
-    vec3 accumulated = (oldColor * float(pc.frameCount) + col) / float(pc.frameCount + 1);
+    if (pc.useTAA == 1) {
 
-    imageStore(outImage, pixel, vec4(accumulated, 1.0));
+        float historyWeight = 0.0;
+        vec4  history        = vec4(-1.0);
+
+        if (primaryDidHit) {
+
+            vec3 reproj = reprojectToPrevPixel(primaryWorldPos, size);
+
+            if (reproj.z > 0.0) {
+
+                history = sampleHistory(reproj.xy, size);
+
+                if (history.r >= 0.0) {
+
+                    // was this the SAME surface in the previous frame, or did we uncover something new?
+                    float expectedPrevDepth = dot(primaryWorldPos - camera.prevPosition.xyz, camera.prevForward.xyz);
+                    float storedPrevDepth   = history.a;
+                    float depthDiff = abs(expectedPrevDepth - storedPrevDepth) / max(expectedPrevDepth, 0.001);
+
+                    if (depthDiff < DEPTH_REJECT_TOL) {
+                        historyWeight = HISTORY_WEIGHT;
+                    }
+                }
+            }
+        }
+
+        vec3 accumulated = mix(col, history.rgb, historyWeight);
+        imageStore(outImage, pixel, vec4(accumulated, currentDepth));
+
+    } else {
+
+        vec3 oldColor    = imageLoad(outImage, pixel).rgb;
+        vec3 accumulated = (oldColor * float(pc.frameCount) + col) / float(pc.frameCount + 1);
+        imageStore(outImage, pixel, vec4(accumulated, currentDepth));
+
+    }
+
 }

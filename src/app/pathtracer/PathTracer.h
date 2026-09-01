@@ -25,6 +25,12 @@ struct CameraUBO {
     glm::vec4 forward;
     glm::vec4 right;
     glm::vec4 up;
+    
+    // Previous frame
+    glm::vec4 prevPosition;
+    glm::vec4 prevForward;
+    glm::vec4 prevRight;
+    glm::vec4 prevUp;
 };
 
 struct Camera {
