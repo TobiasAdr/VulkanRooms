@@ -3,6 +3,9 @@ project(VulkanRooms CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 
+set(OpenImageDenoise_DIR "${CMAKE_CURRENT_SOURCE_DIR}/oidn/lib/cmake/OpenImageDenoise")
+find_package(OpenImageDenoise REQUIRED)
+
 # Dependencies
 include(FetchContent)
 FetchContent_Declare(
@@ -26,7 +29,9 @@ add_executable(VulkanRooms
     src/app/pathtracer/BVH.cpp
 )
 
-target_link_libraries(VulkanRooms Vulkan::Vulkan glfw)
+target_link_libraries(VulkanRooms Vulkan::Vulkan glfw
+OpenImageDenoise
+)
 
 target_include_directories(VulkanRooms PRIVATE
     src
@@ -91,4 +96,10 @@ target_sources(VulkanRooms PRIVATE
 target_include_directories(VulkanRooms PRIVATE
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends
+)
+
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${CMAKE_CURRENT_SOURCE_DIR}/oidn/bin"
+    $<TARGET_FILE_DIR:${PROJECT_NAME}>
 )
