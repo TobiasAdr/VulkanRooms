@@ -89,10 +89,6 @@ const float CELL_SIZE = 4.0;
 const float ROOM_H    = 2.2;
 const float LIGHT_SIZE = 1.2;
 
-const vec3 backRoomsWall  = vec3(0.72, 0.65, 0.25);
-const vec3 backRoomsFloor = vec3(0.58, 0.48, 0.22);
-const vec3 lightColor     = vec3(1.0, 0.98, 0.88);
-
 const float HISTORY_WEIGHT   = 0.9;   // How much of the previous frame should be used
 const float DEPTH_REJECT_TOL = 0.05;
 
@@ -114,22 +110,44 @@ struct Room {
 
 };
 
+const vec3 backRoomsWall  = vec3(0.78, 0.68, 0.12);
+const vec3 backRoomsFloor = vec3(0.48, 0.40, 0.08);
+const vec3 backRoomsRoof  = vec3(0.68, 0.62, 0.22);
+const vec3 lightColor     = vec3(0.96, 0.98, 0.65);
+const vec3 LIGHT_EMISSION = vec3(12.0) * lightColor;
+
 const int WALL_RIGHT = 1;
 const int WALL_LEFT  = 2;
 const int WALL_FAR   = 4;
-const int ROOM_LIGHT = 8;
+const int WALL_NEAR  = 8;
+const int ROOM_LIGHT = 16;
+const int PILLAR     = 32;
 
-const int MAP_W = 6;
-const int MAP_H = 6;
+const int MAP_W = 8;
+const int MAP_H = 8;
 
-const int map[36] = int[](
-    WALL_LEFT | WALL_FAR, WALL_FAR, WALL_FAR | ROOM_LIGHT, WALL_FAR, WALL_FAR, WALL_RIGHT,
-    WALL_LEFT, WALL_FAR, WALL_FAR, WALL_FAR, WALL_FAR | ROOM_LIGHT, WALL_RIGHT | WALL_FAR,
-    WALL_LEFT | WALL_FAR, WALL_FAR, WALL_FAR | ROOM_LIGHT, 0, WALL_FAR, WALL_RIGHT,
-    WALL_LEFT, WALL_FAR | ROOM_LIGHT, WALL_FAR, WALL_FAR, WALL_FAR, WALL_RIGHT | WALL_FAR,
-    WALL_LEFT | WALL_FAR, WALL_FAR, WALL_FAR, WALL_FAR, WALL_FAR, WALL_RIGHT,
-    WALL_LEFT | WALL_FAR, WALL_FAR, WALL_FAR, WALL_FAR | ROOM_LIGHT, WALL_FAR, WALL_RIGHT | WALL_FAR
+// Startpositionen vid cam.pos = {0.0, 1.0, -1.0} hamnar strax utanför cell (0, 0).
+// Denna layout öppnar upp rum (0, 0), tar bort återvändsgränden och leder direkt in i labyrinten:
+
+const int map[64] = int[](
+    // Rad 0 (Öppen startzon med direkt siktlinje framåt och åt sidan)
+    WALL_LEFT | ROOM_LIGHT, 0, WALL_FAR, WALL_RIGHT, WALL_LEFT | ROOM_LIGHT, 0, WALL_FAR, WALL_RIGHT,
+    // Rad 1
+    WALL_LEFT, PILLAR, WALL_RIGHT, WALL_LEFT | ROOM_LIGHT, 0, WALL_RIGHT, WALL_LEFT, WALL_RIGHT,
+    // Rad 2
+    WALL_LEFT | WALL_FAR, 0, 0, 0, WALL_FAR, 0, PILLAR | ROOM_LIGHT, WALL_RIGHT,
+    // Rad 3
+    WALL_LEFT, WALL_RIGHT, WALL_LEFT | WALL_FAR, 0, 0, WALL_RIGHT | WALL_FAR, 0, WALL_RIGHT,
+    // Rad 4
+    WALL_LEFT, 0, 0, WALL_RIGHT | ROOM_LIGHT, WALL_LEFT, 0, 0, WALL_RIGHT | ROOM_LIGHT,
+    // Rad 5
+    WALL_LEFT | WALL_FAR, 0, PILLAR, 0, 0, WALL_FAR, 0, WALL_RIGHT,
+    // Rad 6
+    WALL_LEFT, 0, WALL_RIGHT | WALL_FAR, WALL_LEFT | ROOM_LIGHT, 0, 0, PILLAR, WALL_RIGHT,
+    // Rad 7
+    WALL_LEFT | WALL_NEAR, WALL_NEAR | ROOM_LIGHT, WALL_NEAR, WALL_NEAR | WALL_RIGHT, WALL_LEFT | WALL_NEAR, WALL_NEAR | ROOM_LIGHT, WALL_NEAR, WALL_RIGHT | WALL_NEAR
 );
+
 // ------------- RANDOM -------------
 
 uint rngState;
@@ -365,62 +383,71 @@ bool hitCornellBox(Ray ray, inout HitInfo hit){
 
 }
 
-bool hitMap(Ray ray, inout HitInfo hit){
+bool hitMap(Ray ray, inout HitInfo hit) {
     bool didHit = false;
 
-    for(int row = 0; row < MAP_H; row++){
-        for(int col = 0; col < MAP_W; col++){
-
+    for (int row = 0; row < MAP_H; row++) {
+        for (int col = 0; col < MAP_W; col++) {
             vec3 o = vec3(float(col) * CELL_SIZE, 0.0, float(row) * CELL_SIZE);
             int type = map[row * MAP_W + col];
 
-            bool hasLight = (type & ROOM_LIGHT) != 0;
-            bool hasRight = (type & WALL_RIGHT) != 0;
-            bool hasLeft  = (type & WALL_LEFT)  != 0;
-            bool hasFar   = (type & WALL_FAR)   != 0;
+            bool hasLight  = (type & ROOM_LIGHT) != 0;
+            bool hasRight  = (type & WALL_RIGHT) != 0;
+            bool hasLeft   = (type & WALL_LEFT)  != 0;
+            bool hasFar    = (type & WALL_FAR)   != 0;
+            bool hasNear   = (type & WALL_NEAR)  != 0;
+            bool hasPillar = (type & PILLAR)     != 0;
 
-            didHit = hitQuad(ray, o, o + vec3(CELL_SIZE, 0.0, CELL_SIZE), vec3(0,1,0), backRoomsFloor, false, hit) || didHit;
+            didHit = hitQuad(ray, o, o + vec3(CELL_SIZE, 0.0, CELL_SIZE), vec3(0, 1, 0), backRoomsFloor, false, hit) || didHit;
 
-            if(hasLight){
-
+            if (hasLight) {
                 float margin = (CELL_SIZE - LIGHT_SIZE) * 0.5;
-                vec3 lMin = o + vec3(margin, ROOM_H, margin);
-                vec3 lMax = o + vec3(margin + LIGHT_SIZE, ROOM_H, margin + LIGHT_SIZE);
+                vec3 lMin = o + vec3(margin + 0.2, ROOM_H, margin - 0.2);
+                vec3 lMax = o + vec3(margin + LIGHT_SIZE - 0.2, ROOM_H, margin + LIGHT_SIZE + 0.2);
 
-                Light l;
-                l.minP = lMin;
-                l.maxP = lMax;
-                gLights[gLightCount++] = l;
+                if (gLightCount < MAX_LIGHTS) {
+                    Light l;
+                    l.minP = lMin;
+                    l.maxP = lMax;
+                    gLights[gLightCount++] = l;
+                }
 
-                didHit = hitQuad(ray, lMin, lMax, vec3(0,-1,0), lightColor, true, hit) || didHit;
-
-                didHit = hitQuad(ray, o + vec3(0, ROOM_H, 0), o + vec3(CELL_SIZE, ROOM_H, margin), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
-                didHit = hitQuad(ray, o + vec3(0, ROOM_H, margin + LIGHT_SIZE), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
-                didHit = hitQuad(ray, o + vec3(0, ROOM_H, margin), o + vec3(margin, ROOM_H, margin + LIGHT_SIZE), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
-                didHit = hitQuad(ray, o + vec3(margin + LIGHT_SIZE, ROOM_H, margin), o + vec3(CELL_SIZE, ROOM_H, margin + LIGHT_SIZE), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
-
+                didHit = hitQuad(ray, lMin, lMax, vec3(0, -1, 0), lightColor, true, hit) || didHit;
+                didHit = hitQuad(ray, o + vec3(0, ROOM_H, 0), o + vec3(CELL_SIZE, ROOM_H, lMin.z - o.z), vec3(0, -1, 0), backRoomsRoof, false, hit) || didHit;
+                didHit = hitQuad(ray, o + vec3(0, ROOM_H, lMax.z - o.z), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(0, -1, 0), backRoomsRoof, false, hit) || didHit;
+                didHit = hitQuad(ray, o + vec3(0, ROOM_H, lMin.z - o.z), vec3(lMin.x, ROOM_H, lMax.z), vec3(0, -1, 0), backRoomsRoof, false, hit) || didHit;
+                didHit = hitQuad(ray, vec3(lMax.x, ROOM_H, lMin.z), o + vec3(CELL_SIZE, ROOM_H, lMax.z - o.z), vec3(0, -1, 0), backRoomsRoof, false, hit) || didHit;
             } else {
-
-                didHit = hitQuad(ray, o + vec3(0, ROOM_H, 0), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(0,-1,0), backRoomsWall, false, hit) || didHit;
-
+                didHit = hitQuad(ray, o + vec3(0, ROOM_H, 0), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(0, -1, 0), backRoomsRoof, false, hit) || didHit;
             }
 
-            if(hasRight){
-                didHit = hitQuad(ray, o + vec3(CELL_SIZE,0,0), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(-1,0,0), backRoomsWall, false, hit) || didHit;
+            if (hasRight) {
+                didHit = hitQuad(ray, o + vec3(CELL_SIZE, 0, 0), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(-1, 0, 0), backRoomsWall, false, hit) || didHit;
+            }
+            if (hasLeft) {
+                didHit = hitQuad(ray, o + vec3(0, 0, 0), o + vec3(0, ROOM_H, CELL_SIZE), vec3(1, 0, 0), backRoomsWall, false, hit) || didHit;
+            }
+            if (hasFar) {
+                didHit = hitQuad(ray, o + vec3(0, 0, CELL_SIZE), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(0, 0, -1), backRoomsWall, false, hit) || didHit;
+            }
+            if (hasNear) {
+                didHit = hitQuad(ray, o + vec3(0, 0, 0), o + vec3(CELL_SIZE, ROOM_H, 0), vec3(0, 0, 1), backRoomsWall, false, hit) || didHit;
             }
 
-            if(hasLeft){
-                didHit = hitQuad(ray, o + vec3(0,0,0), o + vec3(0, ROOM_H, CELL_SIZE), vec3(1,0,0), backRoomsWall, false, hit) || didHit;
-            }
+            if (hasPillar) {
+                vec3 pMin = o + vec3(1.6, 0.0, 1.6);
+                vec3 pMax = o + vec3(2.4, ROOM_H, 2.4);
 
-            if(hasFar){
-                didHit = hitQuad(ray, o + vec3(0,0,CELL_SIZE), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(0,0,-1), backRoomsWall, false, hit) || didHit;
+                didHit = hitQuad(ray, vec3(pMin.x, 0, pMin.z), vec3(pMax.x, ROOM_H, pMin.z), vec3(0, 0, -1), backRoomsWall, false, hit) || didHit;
+                didHit = hitQuad(ray, vec3(pMin.x, 0, pMax.z), vec3(pMax.x, ROOM_H, pMax.z), vec3(0, 0, 1),  backRoomsWall, false, hit) || didHit;
+                didHit = hitQuad(ray, vec3(pMin.x, 0, pMin.z), vec3(pMin.x, ROOM_H, pMax.z), vec3(-1, 0, 0), backRoomsWall, false, hit) || didHit;
+                didHit = hitQuad(ray, vec3(pMax.x, 0, pMin.z), vec3(pMax.x, ROOM_H, pMax.z), vec3(1, 0, 0),  backRoomsWall, false, hit) || didHit;
             }
-
         }
     }
     return didHit;
 }
+
 bool hitScene(Ray ray, inout HitInfo hit) {
 
     hit.t = 1e30;
@@ -566,19 +593,24 @@ vec3 tracePath(Ray ray) {
 
         
         if (hitNormal.y > 0.8) { 
-           
-            float rugNoise = fract(sin(dot(floor(hitPoint.xz * 40.0), vec2(127.1, 311.7))) * 43758.5453);
+            float fiber = fract(sin(dot(floor(hitPoint.xz * 60.0), vec2(12.9898, 78.233))) * 43758.5453);
+            float stainNoise = fract(sin(dot(floor(hitPoint.xz * 0.7), vec2(43.12, 19.82))) * 12345.67);
+            float grime = fract(sin(dot(floor(hitPoint.xz * 2.2), vec2(91.7, 33.1))) * 54321.12);
             
-            float stains = fract(sin(dot(floor(hitPoint.xz * 1.5), vec2(12.9898, 78.233))) * 43758.5453);
+            vec3 dirtyPeeBrown = vec3(0.35, 0.26, 0.04);
+            hitColor = mix(hitColor, dirtyPeeBrown, stainNoise * grime * 0.75);
+            hitColor *= mix(0.88, 1.0, fiber);
+        } else if (abs(hitNormal.y) < 0.2) {
+            float wallCoord = abs(hitNormal.x) > 0.5 ? hitPoint.z : hitPoint.x;
+            float seam = smoothstep(0.0, 0.03, abs(fract(wallCoord) - 0.5));
+            float stripes = sin(wallCoord * 32.0) * 0.06 + 0.94;
             
-            //hitColor *= mix(0.7, 1.1, rugNoise);
-            hitColor *= mix(0.65, 1.0, stains);
+            float nicotineSweat = fract(sin(dot(floor(vec2(wallCoord * 3.0, hitPoint.y * 1.5)), vec2(17.3, 71.9))) * 23421.63);
+            vec3 nicotineYellow = vec3(0.85, 0.72, 0.08);
+            hitColor = mix(hitColor, nicotineYellow, nicotineSweat * 0.35);
 
-        } else {
-        
-            float n = fract(sin(dot(floor(hitPoint.xz * 20.0), vec2(127.1, 311.7))) * 43758.5453);
-            hitColor *= 0.9 + 0.2 * n;
-            
+            float baseboardDirt = smoothstep(0.0, 0.5, hitPoint.y);
+            hitColor *= mix(0.65, 1.0, seam) * stripes * mix(0.55, 1.0, baseboardDirt);
         }
 
         if(pc.useNEE == 1){
@@ -680,8 +712,6 @@ void main() {
     vec3 primaryWorldPos = primaryRay.origin + primaryHit.t * primaryRay.dir; 
     float currentDepth    = primaryDidHit ? dot(primaryWorldPos - camera.position.xyz, camera.forward.xyz) : 1e30;
 
-
-
     const int SAMPLES = 1;
 
     vec3 col = vec3(0.0);
@@ -710,7 +740,6 @@ void main() {
 
                 if (history.r >= 0.0) {
 
-                    // was this the SAME surface in the previous frame, or did we uncover something new?
                     float expectedPrevDepth = dot(primaryWorldPos - camera.prevPosition.xyz, camera.prevForward.xyz);
                     float storedPrevDepth   = history.a;
                     float depthDiff = abs(expectedPrevDepth - storedPrevDepth) / max(expectedPrevDepth, 0.001);

@@ -4,11 +4,10 @@
 #include "../scene/MeshLoader.h"
 #include "imgui_impl_vulkan.h"
 #include "imgui_impl_glfw.h"
-
+#include <OpenImageDenoise/oidn.hpp>
+#include <vector>
 
 struct PushConstants {
-
-
     uint32_t jittering = 0;
     uint32_t frameCount = 0;
     uint32_t useNEE;
@@ -17,7 +16,6 @@ struct PushConstants {
     uint32_t samples;
     float focalLength;
     float apertureSize;
-
 };
 
 struct CameraUBO {
@@ -26,7 +24,6 @@ struct CameraUBO {
     glm::vec4 right;
     glm::vec4 up;
     
-    // Previous frame
     glm::vec4 prevPosition;
     glm::vec4 prevForward;
     glm::vec4 prevRight;
@@ -34,7 +31,7 @@ struct CameraUBO {
 };
 
 struct Camera {
-    glm::vec3 pos   = {0.f, 1.f, -1.f};
+    glm::vec3 pos   = {2.0f, 1.2f, 2.0f};
     float yaw       = 0.f;
     float pitch     = 0.f;
 
@@ -51,29 +48,27 @@ struct Camera {
     CameraUBO toUBO() const {
         return { glm::vec4(pos,0), glm::vec4(forward(),0), glm::vec4(right(),0), glm::vec4(up(),0) };
     }
-
 };
 
 class PathTracer : public VulkanApp {
-
 public:
     PathTracer();
     ~PathTracer();
 
 protected:
-
-
     bool firstFrame = true;
 
-    // Camera
+    double lastMouseX = 0.0;
+    double lastMouseY = 0.0;
+    bool firstMouseMove = true;
+
     Camera cam;
     VkBuffer cameraBuffer = VK_NULL_HANDLE;
     VkDeviceMemory cameraBufferMemory = VK_NULL_HANDLE;
-    void* cameraMapped;
+    void* cameraMapped = nullptr;
     void updateCameraBuffer();
     void moveCamera();
 
-    // BVH
     VkBuffer BVHBuffer = VK_NULL_HANDLE;
     VkDeviceMemory BVHBufferMemory = VK_NULL_HANDLE;
     uint32_t BVHNodeCount = 0;
@@ -87,28 +82,41 @@ protected:
     VkImageView    storageImageView   = VK_NULL_HANDLE;
 
     VkDescriptorSetLayout computeDescriptorSetLayout = VK_NULL_HANDLE;
-    VkDescriptorPool      descriptorPool             = VK_NULL_HANDLE;
-    VkDescriptorSet       computeDescriptorSet       = VK_NULL_HANDLE;
+    VkDescriptorPool       descriptorPool             = VK_NULL_HANDLE;
+    VkDescriptorSet        computeDescriptorSet       = VK_NULL_HANDLE;
 
     VkPipeline       computePipeline       = VK_NULL_HANDLE;
     VkPipelineLayout computePipelineLayout = VK_NULL_HANDLE;
 
-    VkPushConstantRange       pushConstantRange{};
+    VkPushConstantRange             pushConstantRange{};
     VkPipelineShaderStageCreateInfo stageInfo{};
     VkPipelineLayoutCreateInfo      layoutInfo{};
-    VkComputePipelineCreateInfo pipelineInfo{};
+    VkComputePipelineCreateInfo     pipelineInfo{};
     VkShaderModule compModule;
-
-
-    // TAA
 
     VkImage previousImage;
     VkDeviceMemory previousImageMemory;
     VkImageView previousImageView;
 
     uint32_t frameCount = 0;
-
     PushConstants pc;
+
+    oidn::DeviceRef oidnDevice;
+    oidn::FilterRef oidnFilter;
+    bool useOIDN = false;
+
+    std::vector<float> oidnColor;
+    std::vector<float> oidnOutput;
+
+    VkBuffer readbackBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory readbackBufferMemory = VK_NULL_HANDLE;
+
+    VkBuffer uploadBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory uploadBufferMemory = VK_NULL_HANDLE;
+
+    void initOIDN();
+    void createOIDNBuffers();
+    void runOIDNDenoise();
 
     void initVulkan() override;
     void cleanup()    override;
@@ -125,7 +133,6 @@ protected:
     void createPipelineInfo();
     void createComputePipeline();
     
-    // TAA
     void createPreviousImage();
     void transitionImageLayoutImmediate(VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout);
 
@@ -135,6 +142,5 @@ protected:
     void createBVHBuffer(const std::vector<BVHNode>& nodes);    
 
     void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) override;
-
     void drawFrame() override;
 };

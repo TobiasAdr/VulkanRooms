@@ -1,8 +1,8 @@
 #include "PathTracer.h"
 #include <fstream>
+#include <iostream>
 
 static std::vector<char> readFile(const std::string& filename) {
-
     std::ifstream file(filename, std::ios::ate | std::ios::binary);
     if (!file.is_open())
         throw std::runtime_error("failed to open file!" + filename + "\n");
@@ -12,28 +12,166 @@ static std::vector<char> readFile(const std::string& filename) {
     file.read(buffer.data(), fileSize);
     file.close();
     return buffer;
-
 }
 
 PathTracer::PathTracer() {}
 PathTracer::~PathTracer() {}
 
 void PathTracer::initVulkan() {
-
     VulkanApp::initVulkan();
+
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+
     createStorageImage();
     createPreviousImage();
     transitionImageLayoutImmediate(previousImage, 
         VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+
     loadMesh("../assets/bunny.obj");
     createCameraBuffer();
     createComputeDescriptors();
     createComputePipeline();
 
+    initOIDN();
+    createOIDNBuffers();
+}
+
+void PathTracer::initOIDN() {
+    oidnDevice = oidn::newDevice();
+    oidnDevice.commit();
+
+    size_t numPixels = swapChainExtent.width * swapChainExtent.height;
+    oidnColor.resize(numPixels * 3);
+    oidnOutput.resize(numPixels * 3);
+
+    oidnFilter = oidnDevice.newFilter("RT");
+    oidnFilter.setImage("color",  oidnColor.data(),  oidn::Format::Float3, swapChainExtent.width, swapChainExtent.height);
+    oidnFilter.setImage("output", oidnOutput.data(), oidn::Format::Float3, swapChainExtent.width, swapChainExtent.height);
+    oidnFilter.set("hdr", true);
+    oidnFilter.commit();
+}
+
+void PathTracer::createOIDNBuffers() {
+
+    VkDeviceSize bufferSize = swapChainExtent.width * swapChainExtent.height * 4 * sizeof(float);
+
+    auto createStaging = [&](VkBuffer& buffer, VkDeviceMemory& memory, VkBufferUsageFlags usage) {
+        VkBufferCreateInfo bufInfo{};
+        bufInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufInfo.size = bufferSize;
+        bufInfo.usage = usage;
+        bufInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        vkCreateBuffer(device, &bufInfo, nullptr, &buffer);
+
+        VkMemoryRequirements memReq;
+        vkGetBufferMemoryRequirements(device, buffer, &memReq);
+
+        VkMemoryAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memReq.size;
+        allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits, 
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+        vkAllocateMemory(device, &allocInfo, nullptr, &memory);
+        vkBindBufferMemory(device, buffer, memory, 0);
+    };
+
+    createStaging(readbackBuffer, readbackBufferMemory, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    createStaging(uploadBuffer,   uploadBufferMemory,   VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+}
+
+void PathTracer::runOIDNDenoise() {
+    vkDeviceWaitIdle(device);
+
+    VkDeviceSize bufferSize = swapChainExtent.width * swapChainExtent.height * 4 * sizeof(float);
+    uint32_t width = swapChainExtent.width;
+    uint32_t height = swapChainExtent.height;
+
+    VkCommandBufferAllocateInfo cmdAlloc{};
+    cmdAlloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    cmdAlloc.commandPool = commandPool;
+    cmdAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cmdAlloc.commandBufferCount = 1;
+
+    VkCommandBuffer cmd;
+    vkAllocateCommandBuffers(device, &cmdAlloc, &cmd);
+
+    VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &beginInfo);
+
+    transitionImageLayout(cmd, storageImage, 
+        VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+
+    VkBufferImageCopy copyRegion{};
+    copyRegion.bufferOffset = 0;
+    copyRegion.bufferRowLength = 0;
+    copyRegion.bufferImageHeight = 0;
+    copyRegion.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    copyRegion.imageOffset = {0, 0, 0};
+    copyRegion.imageExtent = {width, height, 1};
+
+    vkCmdCopyImageToBuffer(cmd, storageImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readbackBuffer, 1, &copyRegion);
+
+    transitionImageLayout(cmd, storageImage, 
+        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+
+    vkEndCommandBuffer(cmd);
+
+    VkSubmitInfo submitInfo{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmd;
+    vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(graphicsQueue);
+    vkFreeCommandBuffers(device, commandPool, 1, &cmd);
+
+    float* srcData = nullptr;
+    vkMapMemory(device, readbackBufferMemory, 0, bufferSize, 0, (void**)&srcData);
+    for (size_t i = 0; i < width * height; ++i) {
+        oidnColor[i * 3 + 0] = srcData[i * 4 + 0];
+        oidnColor[i * 3 + 1] = srcData[i * 4 + 1];
+        oidnColor[i * 3 + 2] = srcData[i * 4 + 2];
+    }
+    vkUnmapMemory(device, readbackBufferMemory);
+
+    oidnFilter.execute();
+
+    const char* errorMessage;
+    if (oidnDevice.getError(errorMessage) != oidn::Error::None) {
+        std::cerr << "OIDN Error: " << errorMessage << std::endl;
+    }
+
+    float* dstData = nullptr;
+    vkMapMemory(device, uploadBufferMemory, 0, bufferSize, 0, (void**)&dstData);
+    for (size_t i = 0; i < width * height; ++i) {
+        dstData[i * 4 + 0] = oidnOutput[i * 3 + 0];
+        dstData[i * 4 + 1] = oidnOutput[i * 3 + 1];
+        dstData[i * 4 + 2] = oidnOutput[i * 3 + 2];
+        dstData[i * 4 + 3] = 1.0f;
+    }
+    vkUnmapMemory(device, uploadBufferMemory);
+
+    vkAllocateCommandBuffers(device, &cmdAlloc, &cmd);
+    vkBeginCommandBuffer(cmd, &beginInfo);
+
+    vkCmdCopyBufferToImage(cmd, uploadBuffer, storageImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+
+    transitionImageLayout(cmd, storageImage, 
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_WRITE_BIT);
+
+    vkEndCommandBuffer(cmd);
+    vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(graphicsQueue);
+    vkFreeCommandBuffers(device, commandPool, 1, &cmd);
 }
 
 void PathTracer::transitionImageLayoutImmediate(VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout) {
-
     VkCommandBufferAllocateInfo cmdAllocInfo{};
     cmdAllocInfo.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     cmdAllocInfo.commandPool        = commandPool;
@@ -63,11 +201,9 @@ void PathTracer::transitionImageLayoutImmediate(VkImage image, VkImageLayout old
     vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
     vkQueueWaitIdle(graphicsQueue);
     vkFreeCommandBuffers(device, commandPool, 1, &cmd);
-
 }
 
 void PathTracer::createStorageImage() {
-   
     VkImageCreateInfo imageInfo{};
     imageInfo.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageInfo.imageType     = VK_IMAGE_TYPE_2D;
@@ -77,7 +213,7 @@ void PathTracer::createStorageImage() {
     imageInfo.arrayLayers   = 1;
     imageInfo.samples       = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.tiling        = VK_IMAGE_TILING_OPTIMAL;
-    imageInfo.usage         = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    imageInfo.usage         = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
     vkCreateImage(device, &imageInfo, nullptr, &storageImage);
@@ -101,11 +237,9 @@ void PathTracer::createStorageImage() {
     viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
 
     vkCreateImageView(device, &viewInfo, nullptr, &storageImageView);
-
 }
 
-void PathTracer::createCameraBuffer(){
-
+void PathTracer::createCameraBuffer() {
     VkDeviceSize bufferSize = sizeof(CameraUBO);
 
     VkBufferCreateInfo cBuffer{};
@@ -114,47 +248,23 @@ void PathTracer::createCameraBuffer(){
     cBuffer.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
     cBuffer.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-    if(vkCreateBuffer(device, &cBuffer, nullptr, &cameraBuffer) != VK_SUCCESS){
-
-        throw std::runtime_error("Failed to create Camera Buffer");
-
-    }
+    vkCreateBuffer(device, &cBuffer, nullptr, &cameraBuffer);
 
     VkMemoryRequirements memReq;
     vkGetBufferMemoryRequirements(device, cameraBuffer, &memReq);
 
     VkMemoryAllocateInfo allocInfo{};
-
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocInfo.allocationSize = memReq.size;
+    allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits, 
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
-    VkPhysicalDeviceMemoryProperties memProp;
-    vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProp);
-
-    uint32_t memTypeIndex = 0;
-        VkMemoryPropertyFlags props = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-        for (uint32_t j = 0; j < memProp.memoryTypeCount; j++) {
-            if ((memReq.memoryTypeBits & (1 << j)) &&
-                (memProp.memoryTypes[j].propertyFlags & props) == props) {
-                memTypeIndex = j;
-                break;
-            }
-        }
-        
-    allocInfo.memoryTypeIndex = memTypeIndex;
-
-    if(vkAllocateMemory(device, &allocInfo, nullptr, &cameraBufferMemory) != VK_SUCCESS)
-        throw std::runtime_error("Kunde inte allokera kamera buffer minne");
-
-
+    vkAllocateMemory(device, &allocInfo, nullptr, &cameraBufferMemory);
     vkBindBufferMemory(device, cameraBuffer, cameraBufferMemory, 0);
     vkMapMemory(device, cameraBufferMemory, 0, bufferSize, 0, &cameraMapped);
-
 }
 
-
-void PathTracer::createDescriptorPool(){
-
+void PathTracer::createDescriptorPool() {
     VkDescriptorPoolSize poolSizes[5]{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     poolSizes[0].descriptorCount = 1;
@@ -185,30 +295,29 @@ void PathTracer::createDescriptorPool(){
     allocInfo.descriptorSetCount = 1;
     allocInfo.pSetLayouts        = &computeDescriptorSetLayout;
     vkAllocateDescriptorSets(device, &allocInfo, &computeDescriptorSet);
-
 }
-void PathTracer::createDescriptorSetLayout(){
 
+void PathTracer::createDescriptorSetLayout() {
     VkDescriptorSetLayoutBinding bindings[5]{};
     bindings[0].binding         = 0;
     bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     bindings[0].descriptorCount = 1;
     bindings[0].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
 
-    bindings[1].binding = 1;
-    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[1].binding         = 1;
+    bindings[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     bindings[1].descriptorCount = 1;
-    bindings[1].stageFlags= VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[1].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
 
-    bindings[2].binding = 2;
-    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[2].binding         = 2;
+    bindings[2].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     bindings[2].descriptorCount = 1;
-    bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[2].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
 
-    bindings[3].binding = 3;
-    bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    bindings[3].binding         = 3;
+    bindings[3].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     bindings[3].descriptorCount = 1;
-    bindings[3].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[3].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
 
     bindings[4].binding         = 4;
     bindings[4].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -220,11 +329,9 @@ void PathTracer::createDescriptorSetLayout(){
     layoutInfo.bindingCount = 5;
     layoutInfo.pBindings    = bindings;
     vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &computeDescriptorSetLayout);
-
 }
 
-void PathTracer::createWrites(){
-
+void PathTracer::createWrites() {
     VkDescriptorImageInfo imageInfo{};
     imageInfo.imageView   = storageImageView;
     imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
@@ -232,59 +339,51 @@ void PathTracer::createWrites(){
     VkDescriptorBufferInfo triBufferInfo{};
     triBufferInfo.buffer = triangleBuffer;
     triBufferInfo.offset = 0;
-    triBufferInfo.range = sizeof(Triangle) * triangleCount;
+    triBufferInfo.range  = sizeof(Triangle) * triangleCount;
 
     VkDescriptorBufferInfo BVHNodeBufferInfo{};
     BVHNodeBufferInfo.buffer = BVHBuffer;
     BVHNodeBufferInfo.offset = 0;
-    BVHNodeBufferInfo.range = sizeof(BVHNode) * BVHNodeCount;
+    BVHNodeBufferInfo.range  = sizeof(BVHNode) * BVHNodeCount;
 
     VkDescriptorBufferInfo cameraUBOInfo{};
     cameraUBOInfo.buffer = cameraBuffer;
     cameraUBOInfo.offset = 0;
-    cameraUBOInfo.range = sizeof(CameraUBO);
+    cameraUBOInfo.range  = sizeof(CameraUBO);
 
     VkDescriptorImageInfo prevImageInfo{};
     prevImageInfo.imageView   = previousImageView;
     prevImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-
     const int num_writes = 5;
-
     VkWriteDescriptorSet writes[num_writes]{};
-    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[0].dstSet = computeDescriptorSet;
-    writes[0].dstBinding = 0;
+    writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet          = computeDescriptorSet;
+    writes[0].dstBinding      = 0;
     writes[0].descriptorCount = 1;
-    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    writes[0].pImageInfo = &imageInfo;
+    writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    writes[0].pImageInfo      = &imageInfo;
 
-    // Triangles
-    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[1].dstSet = computeDescriptorSet;
-    writes[1].dstBinding = 1;
-    writes[1].dstArrayElement = 0;
-    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet          = computeDescriptorSet;
+    writes[1].dstBinding      = 1;
+    writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     writes[1].descriptorCount = 1;
-    writes[1].pBufferInfo = &triBufferInfo;
+    writes[1].pBufferInfo     = &triBufferInfo;
 
-    // BVH nodes
-    writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[2].dstSet = computeDescriptorSet;
-    writes[2].dstBinding = 2;
-    writes[2].dstArrayElement = 0;
-    writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    writes[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[2].dstSet          = computeDescriptorSet;
+    writes[2].dstBinding      = 2;
+    writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     writes[2].descriptorCount = 1;
-    writes[2].pBufferInfo = &BVHNodeBufferInfo;
+    writes[2].pBufferInfo     = &BVHNodeBufferInfo;
 
-    // Camera UBO
-    writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[3].dstSet = computeDescriptorSet;
-    writes[3].dstBinding = 3;
-    writes[3].dstArrayElement = 0;
-    writes[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[3].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[3].dstSet          = computeDescriptorSet;
+    writes[3].dstBinding      = 3;
+    writes[3].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     writes[3].descriptorCount = 1;
-    writes[3].pBufferInfo = &cameraUBOInfo;
+    writes[3].pBufferInfo     = &cameraUBOInfo;
 
     writes[4].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[4].dstSet          = computeDescriptorSet;
@@ -294,7 +393,6 @@ void PathTracer::createWrites(){
     writes[4].pImageInfo      = &prevImageInfo;
 
     vkUpdateDescriptorSets(device, num_writes, writes, 0, nullptr);
-
 }
 
 void PathTracer::updateCameraBuffer() {
@@ -312,39 +410,31 @@ void PathTracer::updateCameraBuffer() {
     data.prevUp       = glm::vec4(prevCam.up(), 0);
 
     memcpy(cameraMapped, &data, sizeof(CameraUBO));
-
     prevCam = cam; 
 }
 
-
 void PathTracer::createComputeDescriptors() {
-
     createDescriptorSetLayout();
     createDescriptorPool();
     createWrites();
-
 }
 
 void PathTracer::pushConstants() {
-
-    pc.jittering = 0;
+    pc.jittering    = 0;
     pc.frameCount   = 0;
     pc.useNEE       = 1;
     pc.useRealLens  = 0;
-    pc.useTAA = 0;
-    pc.samples = 2;
+    pc.useTAA       = 0;
+    pc.samples      = 2;
     pc.focalLength  = 5.0f;
     pc.apertureSize = 0.05f;
-    
 
     pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pushConstantRange.offset     = 0;
     pushConstantRange.size       = sizeof(PushConstants);
-
 }
 
-void PathTracer::createShaderInfo(){
-
+void PathTracer::createShaderInfo() {
     auto compCode = readFile("shaders/comp.spv");
     compModule = createShaderModule(compCode);
 
@@ -352,57 +442,39 @@ void PathTracer::createShaderInfo(){
     stageInfo.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
     stageInfo.module = compModule;
     stageInfo.pName  = "main";
-
 }
 
-void PathTracer::createLayoutInfo(){
-
+void PathTracer::createLayoutInfo() {
     layoutInfo.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     layoutInfo.setLayoutCount         = 1;
     layoutInfo.pSetLayouts            = &computeDescriptorSetLayout;
     layoutInfo.pushConstantRangeCount = 1;
     layoutInfo.pPushConstantRanges    = &pushConstantRange;
     vkCreatePipelineLayout(device, &layoutInfo, nullptr, &computePipelineLayout);
-
 }
-void PathTracer::createPipelineInfo(){
 
+void PathTracer::createPipelineInfo() {
     pipelineInfo.sType  = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
     pipelineInfo.stage  = stageInfo;
     pipelineInfo.layout = computePipelineLayout;
     vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &computePipeline);
-
 }
 
 void PathTracer::loadMesh(const std::string& filename) {
-
     MeshLoader loader;
-    
     loader.load("../assets/chair.obj", glm::vec3(2.0f, 0.f, 0.5f), .5f);
-   /* loader.load("../assets/chair.obj", glm::vec3(4.0f, 0.f, 4.f), .5f);
-    loader.load("../assets/chair.obj", glm::vec3(7.0f, 0.f, 1.f), .5f);
-    loader.load("../assets/chair.obj", glm::vec3(7.0f, 0.f, 8.f), .5f);
-    loader.load("../assets/chair.obj", glm::vec3(9.0f, 0.f, 3.f), .5f);
 
-    loader.load("../assets/smalltable.obj", glm::vec3(4.0f, 0.f, 3.f), .5f);
-    loader.load("../assets/smalltable.obj", glm::vec3(7.0f, 0.f, 4.f), .5f);
-    
-    loader.load("../assets/bunny.obj", glm::vec3(4.f, 0.3f, 3.f), 5.0f);
-*/
     BVH bvh;
     bvh.build(loader.triangles);
 
     createTriangleBuffer(bvh.sortedTriangles);
     createBVHBuffer(bvh.nodes);
-
 }
 
 void PathTracer::createTriangleBuffer(const std::vector<Triangle>& triangles) {
-
     VkDeviceSize bufferSize = sizeof(Triangle) * triangles.size();
     triangleCount = static_cast<uint32_t>(triangles.size());
 
-    // Staging buffer
     VkBuffer stagingBuffer;
     VkDeviceMemory stagingMemory;
 
@@ -411,7 +483,6 @@ void PathTracer::createTriangleBuffer(const std::vector<Triangle>& triangles) {
     stagingInfo.size = bufferSize;
     stagingInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     stagingInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
     vkCreateBuffer(device, &stagingInfo, nullptr, &stagingBuffer);
 
     VkMemoryRequirements memReq;
@@ -431,7 +502,6 @@ void PathTracer::createTriangleBuffer(const std::vector<Triangle>& triangles) {
     memcpy(data, triangles.data(), bufferSize);
     vkUnmapMemory(device, stagingMemory);
 
-    // GPU buffer
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bufferInfo.size = bufferSize;
@@ -444,13 +514,11 @@ void PathTracer::createTriangleBuffer(const std::vector<Triangle>& triangles) {
     VkMemoryAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocInfo.allocationSize = memReq.size;
-    allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
     vkAllocateMemory(device, &allocInfo, nullptr, &triangleBufferMemory);
     vkBindBufferMemory(device, triangleBuffer, triangleBufferMemory, 0);
 
-    // Kopiera via command buffer
     VkCommandBufferAllocateInfo cmdAllocInfo{};
     cmdAllocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     cmdAllocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
@@ -482,29 +550,20 @@ void PathTracer::createTriangleBuffer(const std::vector<Triangle>& triangles) {
 
     vkDestroyBuffer(device, stagingBuffer, nullptr);
     vkFreeMemory(device, stagingMemory, nullptr);
-   
 }
 
-void PathTracer::createBVHBuffer(const std::vector<BVHNode>& nodes){
-
+void PathTracer::createBVHBuffer(const std::vector<BVHNode>& nodes) {
     VkDeviceSize bufferSize = sizeof(BVHNode) * nodes.size();
     BVHNodeCount = static_cast<uint32_t>(nodes.size());
 
     VkBuffer stagingBuffer;
     VkDeviceMemory stagingMemory;
 
-    // ------------------- STAGING BUFFER -------------------
-
-    // Staging buffer lets the GPU memory read from host_visible to device local. 
-
-    // This lets the entirety of the buffer be on the gpu for reading. 
-
     VkBufferCreateInfo stagingInfo{};
     stagingInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     stagingInfo.size = bufferSize;
     stagingInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     stagingInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
     vkCreateBuffer(device, &stagingInfo, nullptr, &stagingBuffer);
 
     VkMemoryRequirements memReq;
@@ -514,7 +573,7 @@ void PathTracer::createBVHBuffer(const std::vector<BVHNode>& nodes){
     stagingAllocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     stagingAllocInfo.allocationSize = memReq.size;
     stagingAllocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
-    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
     vkAllocateMemory(device, &stagingAllocInfo, nullptr, &stagingMemory);
     vkBindBufferMemory(device, stagingBuffer, stagingMemory, 0);
@@ -523,8 +582,6 @@ void PathTracer::createBVHBuffer(const std::vector<BVHNode>& nodes){
     vkMapMemory(device, stagingMemory, 0, bufferSize, 0, &data);
     memcpy(data, nodes.data(), bufferSize);
     vkUnmapMemory(device, stagingMemory);
-
-    // ----------------- STAGING BUFFER END -------------------------
 
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -548,10 +605,6 @@ void PathTracer::createBVHBuffer(const std::vector<BVHNode>& nodes){
     cmdAllocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     cmdAllocInfo.commandPool = commandPool;
     cmdAllocInfo.commandBufferCount = 1; 
-    
-    // We record a one time command to send the BVH nodes to the GPU
-
-    // This is done one time on init. 
 
     VkCommandBuffer cmd;
     vkAllocateCommandBuffers(device, &cmdAllocInfo, &cmd);
@@ -572,42 +625,35 @@ void PathTracer::createBVHBuffer(const std::vector<BVHNode>& nodes){
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &cmd;
 
-    // Graphics queue is used here to transfer the triangles to GPU
-
     vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
     vkQueueWaitIdle(graphicsQueue);
     vkFreeCommandBuffers(device, commandPool, 1, &cmd);
 
     vkDestroyBuffer(device, stagingBuffer, nullptr);
     vkFreeMemory(device, stagingMemory, nullptr);
-
-    std::cout << "BVH created with " << BVHNodeCount << " nodes!\n";
-
 }
 
 void PathTracer::createComputePipeline() {
-
     pushConstants();
     createShaderInfo();
     createLayoutInfo();
     createPipelineInfo();
-
     vkDestroyShaderModule(device, compModule, nullptr);
-
 }
 
 void PathTracer::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
-
     pc.frameCount++;
 
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     vkBeginCommandBuffer(commandBuffer, &beginInfo);
 
+    VkImageLayout oldStorageLayout = firstFrame ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL;
     transitionImageLayout(commandBuffer, storageImage,
-        VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+        oldStorageLayout, VK_IMAGE_LAYOUT_GENERAL,
         VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        0, VK_ACCESS_SHADER_WRITE_BIT);
+        0, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT);
+    firstFrame = false;
 
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
@@ -658,6 +704,11 @@ void PathTracer::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t ima
         swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         1, &blit, VK_FILTER_NEAREST);
 
+    transitionImageLayout(commandBuffer, storageImage,
+        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT);
+
     VkRenderPassBeginInfo rpBegin{};
     rpBegin.sType             = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     rpBegin.renderPass        = imGuiRenderPass;
@@ -671,11 +722,15 @@ void PathTracer::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t ima
     vkCmdEndRenderPass(commandBuffer);
 
     vkEndCommandBuffer(commandBuffer);
-
 }
 
-
 void PathTracer::cleanup() {
+    vkDeviceWaitIdle(device);
+
+    vkDestroyBuffer(device, readbackBuffer, nullptr);
+    vkFreeMemory(device, readbackBufferMemory, nullptr);
+    vkDestroyBuffer(device, uploadBuffer, nullptr);
+    vkFreeMemory(device, uploadBufferMemory, nullptr);
 
     vkDestroyBuffer(device, triangleBuffer, nullptr);
     vkFreeMemory(device, triangleBufferMemory, nullptr);
@@ -692,7 +747,6 @@ void PathTracer::cleanup() {
     vkDestroyImage(device, storageImage, nullptr);
     vkFreeMemory(device, storageImageMemory, nullptr);
 
-    // TAA, previous
     vkDestroyImageView(device, previousImageView, nullptr);
     vkDestroyImage(device, previousImage, nullptr);
     vkFreeMemory(device, previousImageMemory, nullptr);
@@ -700,24 +754,63 @@ void PathTracer::cleanup() {
     VulkanApp::cleanup();
 }
 
-void PathTracer::moveCamera(){
+void PathTracer::moveCamera() {
+    static bool cursorLocked = true;
+    static bool escPressedLastFrame = false;
+
+    bool escPressed = (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS);
+    if (escPressed && !escPressedLastFrame) {
+        cursorLocked = !cursorLocked;
+        glfwSetInputMode(window, GLFW_CURSOR, cursorLocked ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+        firstMouseMove = true;
+    }
+    escPressedLastFrame = escPressed;
 
     bool moved = false;
-    float speed = 0.05f;
+    float moveSpeed = 0.05f;
+    float mouseSensitivity = 0.1f;
 
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) { cam.pos += cam.forward() * speed; moved = true; }
-    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) { cam.pos -= cam.forward() * speed; moved = true; }
-    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) { cam.pos -= cam.right()   * speed; moved = true; }
-    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) { cam.pos += cam.right()   * speed; moved = true; }
+    if (cursorLocked) {
+        double mouseX, mouseY;
+        glfwGetCursorPos(window, &mouseX, &mouseY);
 
-    if(!pc.useTAA){
-        if (moved) pc.frameCount = 0;
+        if (firstMouseMove) {
+            lastMouseX = mouseX;
+            lastMouseY = mouseY;
+            firstMouseMove = false;
+        }
+
+        float xOffset = static_cast<float>(mouseX - lastMouseX);
+        float yOffset = static_cast<float>(lastMouseY - mouseY);
+
+        lastMouseX = mouseX;
+        lastMouseY = mouseY;
+
+        if (std::abs(xOffset) > 0.0001f || std::abs(yOffset) > 0.0001f) {
+            cam.yaw   -= xOffset * mouseSensitivity;
+            cam.pitch += yOffset * mouseSensitivity;
+
+            if (cam.pitch > 89.0f)  cam.pitch = 89.0f;
+            if (cam.pitch < -89.0f) cam.pitch = -89.0f;
+
+            moved = true;
+        }
     }
 
+    ImGuiIO& io = ImGui::GetIO();
+    if (!io.WantCaptureKeyboard) {
+        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) { cam.pos += cam.forward() * moveSpeed; moved = true; }
+        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) { cam.pos -= cam.forward() * moveSpeed; moved = true; }
+        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) { cam.pos -= cam.right()   * moveSpeed; moved = true; }
+        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) { cam.pos += cam.right()   * moveSpeed; moved = true; }
+    }
+
+    if (!pc.useTAA && moved) {
+        pc.frameCount = 0;
+    }
 }
 
 void PathTracer::createPreviousImage() {
-
     VkImageCreateInfo imageInfo{};
     imageInfo.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageInfo.imageType     = VK_IMAGE_TYPE_2D;
@@ -728,8 +821,8 @@ void PathTracer::createPreviousImage() {
     imageInfo.samples       = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.tiling        = VK_IMAGE_TILING_OPTIMAL;
     imageInfo.usage         = VK_IMAGE_USAGE_STORAGE_BIT 
-                            | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
-                            | VK_IMAGE_USAGE_TRANSFER_DST_BIT; // behövs för copy
+                            | VK_IMAGE_USAGE_TRANSFER_SRC_BIT 
+                            | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
     vkCreateImage(device, &imageInfo, nullptr, &previousImage);
@@ -753,11 +846,9 @@ void PathTracer::createPreviousImage() {
     viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
 
     vkCreateImageView(device, &viewInfo, nullptr, &previousImageView);
-
 }
 
 void PathTracer::drawFrame() {
-
     moveCamera();
     updateCameraBuffer();
 
@@ -767,12 +858,15 @@ void PathTracer::drawFrame() {
 
     ImGui::Begin("Settings");
 
-    bool jittering = pc.jittering;
-    if(ImGui::Checkbox("Jittering", &jittering)){
+    ImGui::Checkbox("Use OIDN (Heavy)", &useOIDN);
+    if (ImGui::Button("Run OIDN Single Shot")) {
+        runOIDNDenoise();
+    }
 
+    bool jittering = pc.jittering;
+    if (ImGui::Checkbox("Jittering", &jittering)) {
         pc.jittering = jittering ? 1 : 0;
         pc.frameCount = 0;
-
     }
 
     bool nee = pc.useNEE;
@@ -806,4 +900,8 @@ void PathTracer::drawFrame() {
     ImGui::Render();
 
     VulkanApp::drawFrame();
+
+    if (useOIDN) {
+        runOIDNDenoise();
+    }
 }
