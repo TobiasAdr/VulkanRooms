@@ -5,6 +5,7 @@
 #include <vector>
 #include <string>
 
+
 struct Triangle {
     glm::vec4 v0;
     glm::vec4 v1;

@@ -55,6 +55,9 @@ add_custom_command(
     COMMAND ${GLSLC} ${SHADER_DIR}/shader.vert -o ${SPIRV_DIR}/vert.spv
     COMMAND ${GLSLC} ${SHADER_DIR}/shader.frag -o ${SPIRV_DIR}/frag.spv
     COMMAND ${GLSLC} ${SHADER_DIR}/pathtracer.comp -o ${SPIRV_DIR}/comp.spv
+    COMMAND ${GLSLC} ${SHADER_DIR}/gbuffer.vert -o ${SPIRV_DIR}/gvert.spv
+    COMMAND ${GLSLC} ${SHADER_DIR}/gbuffer.vert -o ${SPIRV_DIR}/gfrag.spv
+
     DEPENDS
         ${SHADER_DIR}/shader.vert
         ${SHADER_DIR}/shader.frag

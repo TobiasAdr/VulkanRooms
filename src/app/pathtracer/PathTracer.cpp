@@ -460,12 +460,39 @@ void PathTracer::createPipelineInfo() {
     vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &computePipeline);
 }
 
+#include <glm/gtc/matrix_transform.hpp>
+
 void PathTracer::loadMesh(const std::string& filename) {
-    MeshLoader loader;
-    loader.load("../assets/chair.obj", glm::vec3(2.0f, 0.f, 0.5f), .5f);
+    MeshLoader baseLoader;
+    baseLoader.load("../assets/chair.obj", glm::vec3(0.0f), 0.5f);
+    const std::vector<Triangle>& baseChair = baseLoader.triangles;
+
+    std::vector<Triangle> allTriangles;
+
+    auto addChairTransformed = [&](glm::vec3 pos, glm::vec3 rotDegrees) {
+        glm::mat4 model = glm::mat4(1.0f);
+        model = glm::translate(model, pos);
+        model = glm::rotate(model, glm::radians(rotDegrees.y), glm::vec3(0.0f, 1.0f, 0.0f));
+        model = glm::rotate(model, glm::radians(rotDegrees.x), glm::vec3(1.0f, 0.0f, 0.0f));
+        model = glm::rotate(model, glm::radians(rotDegrees.z), glm::vec3(0.0f, 0.0f, 1.0f));
+
+        glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(model)));
+
+        for (const auto& tri : baseChair) {
+            Triangle t;
+            t.v0 = model * glm::vec4(glm::vec3(tri.v0), 1.0f);
+            t.v1 = model * glm::vec4(glm::vec3(tri.v1), 1.0f);
+            t.v2 = model * glm::vec4(glm::vec3(tri.v2), 1.0f);
+
+            t.normal = glm::vec4(glm::normalize(normalMatrix * glm::vec3(tri.normal)), 0.0f);
+            allTriangles.push_back(t);
+        }
+    };
+
+    addChairTransformed(glm::vec3(-0.1f,  1.10f, 2.2f), glm::vec3(35.0f, -120.0f, 70.0f));
 
     BVH bvh;
-    bvh.build(loader.triangles);
+    bvh.build(allTriangles);
 
     createTriangleBuffer(bvh.sortedTriangles);
     createBVHBuffer(bvh.nodes);
@@ -857,6 +884,10 @@ void PathTracer::drawFrame() {
     ImGui::NewFrame();
 
     ImGui::Begin("Settings");
+
+    ImGuiIO& io = ImGui::GetIO();
+    ImGui::Text("FPS: %.1f (%.2f ms/frame)", io.Framerate, 1000.0f / io.Framerate);
+    ImGui::Separator();
 
     ImGui::Checkbox("Use OIDN (Heavy)", &useOIDN);
     if (ImGui::Button("Run OIDN Single Shot")) {
