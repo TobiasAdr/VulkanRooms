@@ -114,11 +114,13 @@ void VulkanApp::createInstance() {
 }
 
 void VulkanApp::setupDebugMessenger() {
+   
     if (!enableValidationLayers) return;
     VkDebugUtilsMessengerCreateInfoEXT createInfo;
     populateDebugMessengerCreateInfo(createInfo);
     if (CreateDebugUtilsMessengerEXT(instance, &createInfo, nullptr, &debugMessenger) != VK_SUCCESS)
         throw std::runtime_error("Failed to set up debug messenger!");
+
 }
 
 void VulkanApp::pickPhysicalDevice() {
@@ -136,6 +138,7 @@ void VulkanApp::pickPhysicalDevice() {
     }
     if (physicalDevice == VK_NULL_HANDLE)
         throw std::runtime_error("Failed to find a suitable GPU!");
+
 }
 
 void VulkanApp::createLogicalDevice() {
@@ -249,7 +252,7 @@ void VulkanApp::createImGuiFramebuffers() {
 
 void VulkanApp::initImGui() {
 
-    // Descriptor pool för ImGui
+
     VkDescriptorPoolSize poolSizes[] = {
         { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 }
     };
@@ -545,6 +548,7 @@ void VulkanApp::createSyncObjects() {
 }
 
 void VulkanApp::drawFrame() {
+    
     vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
 
     uint32_t imageIndex;
@@ -591,9 +595,11 @@ void VulkanApp::drawFrame() {
         recreateSwapChain();
 
     currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+
 }
 
 void VulkanApp::recreateSwapChain() {
+
     int width = 0, height = 0;
     glfwGetFramebufferSize(window, &width, &height);
     while (width == 0 || height == 0) {
@@ -605,6 +611,7 @@ void VulkanApp::recreateSwapChain() {
     createSwapChain();
     createImageViews();
     createImGuiFramebuffers();
+
 }
 
 void VulkanApp::cleanupSwapChain() {
@@ -619,6 +626,7 @@ void VulkanApp::cleanupSwapChain() {
 }
 
 void VulkanApp::initVulkan() {
+
     createInstance();
     setupDebugMessenger();
     createSurface();
@@ -632,6 +640,7 @@ void VulkanApp::initVulkan() {
     createImGuiRenderPass();       
     createImGuiFramebuffers();     
     initImGui();                   
+
 }
 
 void VulkanApp::mainLoop() {
@@ -650,6 +659,7 @@ void VulkanApp::run() {
 }
 
 void VulkanApp::cleanup() {
+    
     cleanupSwapChain();
 
     for (size_t i = 0; i < swapChainImages.size(); i++) {
@@ -678,4 +688,5 @@ void VulkanApp::cleanup() {
 
     glfwDestroyWindow(window);
     glfwTerminate();
+
 }

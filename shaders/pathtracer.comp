@@ -123,29 +123,15 @@ const int WALL_NEAR  = 8;
 const int ROOM_LIGHT = 16;
 const int PILLAR     = 32;
 
-const int MAP_W = 8;
-const int MAP_H = 8;
+const int MAP_W = 5;
+const int MAP_H = 5;
 
-// Startpositionen vid cam.pos = {0.0, 1.0, -1.0} hamnar strax utanför cell (0, 0).
-// Denna layout öppnar upp rum (0, 0), tar bort återvändsgränden och leder direkt in i labyrinten:
-
-const int map[64] = int[](
-    // Rad 0 (Öppen startzon med direkt siktlinje framåt och åt sidan)
-    WALL_LEFT | ROOM_LIGHT, 0, WALL_FAR, WALL_RIGHT, WALL_LEFT | ROOM_LIGHT, 0, WALL_FAR, WALL_RIGHT,
-    // Rad 1
-    WALL_LEFT, PILLAR, WALL_RIGHT, WALL_LEFT | ROOM_LIGHT, 0, WALL_RIGHT, WALL_LEFT, WALL_RIGHT,
-    // Rad 2
-    WALL_LEFT | WALL_FAR, 0, 0, 0, WALL_FAR, 0, PILLAR | ROOM_LIGHT, WALL_RIGHT,
-    // Rad 3
-    WALL_LEFT, WALL_RIGHT, WALL_LEFT | WALL_FAR, 0, 0, WALL_RIGHT | WALL_FAR, 0, WALL_RIGHT,
-    // Rad 4
-    WALL_LEFT, 0, 0, WALL_RIGHT | ROOM_LIGHT, WALL_LEFT, 0, 0, WALL_RIGHT | ROOM_LIGHT,
-    // Rad 5
-    WALL_LEFT | WALL_FAR, 0, PILLAR, 0, 0, WALL_FAR, 0, WALL_RIGHT,
-    // Rad 6
-    WALL_LEFT, 0, WALL_RIGHT | WALL_FAR, WALL_LEFT | ROOM_LIGHT, 0, 0, PILLAR, WALL_RIGHT,
-    // Rad 7
-    WALL_LEFT | WALL_NEAR, WALL_NEAR | ROOM_LIGHT, WALL_NEAR, WALL_NEAR | WALL_RIGHT, WALL_LEFT | WALL_NEAR, WALL_NEAR | ROOM_LIGHT, WALL_NEAR, WALL_RIGHT | WALL_NEAR
+const int map[25] = int[](
+    WALL_LEFT | ROOM_LIGHT, 0,                      WALL_FAR,              0,                      WALL_RIGHT | ROOM_LIGHT,
+    WALL_LEFT,             PILLAR,                 0,                     WALL_RIGHT,             WALL_RIGHT,
+    WALL_LEFT | WALL_FAR,  0,                      ROOM_LIGHT,            0,                      WALL_RIGHT,
+    WALL_LEFT,             WALL_RIGHT,             0,                     PILLAR | ROOM_LIGHT,    WALL_RIGHT,
+    WALL_LEFT | WALL_NEAR, WALL_NEAR | ROOM_LIGHT, WALL_NEAR,             WALL_NEAR,              WALL_RIGHT | WALL_NEAR
 );
 
 // ------------- RANDOM -------------
@@ -340,47 +326,33 @@ bool hitBVH(Ray ray, inout HitInfo hit){
 }
 
 
-bool hitCornellBox(Ray ray, inout HitInfo hit){
-
+bool hitCornellBox(Ray ray, inout HitInfo hit) {
     bool didHit = false;
 
-    didHit = hitQuad(ray, vec3(-1, 0,0), vec3( 1, 0, 2), vec3(0, 1,0),  backRoomsWall, false, hit) || didHit; // Floor
-    didHit = hitQuad(ray, vec3(-1, 2,0), vec3( 1, 2, 2), vec3(0,-1,0),  backRoomsWall, false, hit) || didHit; // Roof
-    didHit = hitQuad(ray, vec3(-1, 0,0), vec3(-1, 2, 2), vec3(1, 0,0),  backRoomsWall, false, hit) || didHit; // Left
-    didHit = hitQuad(ray, vec3( 1, 0,0), vec3( 1, 2, 2), vec3(-1,0,0),  backRoomsWall, false, hit) || didHit; // Right
-    didHit = hitQuad(ray, vec3(-1, 0,0), vec3( 1, 2, 2), vec3(0, 0,-1), backRoomsWall, false, hit) || didHit; // Back
+    vec3 bMin = vec3(-3.0, 0.0, -1.0);
+    vec3 bMax = vec3( 3.0, 2.6,  5.0);
 
-    vec3 lightMinBox = vec3(-0.24, 1.99, 0.2);
-    vec3 lightMaxBox = vec3(0.24, 1.99, 0.6);
+    didHit = hitQuad(ray, vec3(bMin.x, bMin.y, bMin.z), vec3(bMax.x, bMin.y, bMax.z), vec3(0, 1, 0), backRoomsFloor, false, hit) || didHit;
+    didHit = hitQuad(ray, vec3(bMin.x, bMax.y, bMin.z), vec3(bMax.x, bMax.y, bMax.z), vec3(0, -1, 0), backRoomsRoof, false, hit) || didHit;
+    didHit = hitQuad(ray, vec3(bMin.x, bMin.y, bMin.z), vec3(bMin.x, bMax.y, bMax.z), vec3(1, 0, 0), backRoomsWall, false, hit) || didHit;
+    didHit = hitQuad(ray, vec3(bMax.x, bMin.y, bMin.z), vec3(bMax.x, bMax.y, bMax.z), vec3(-1, 0, 0), backRoomsWall, false, hit) || didHit;
+    didHit = hitQuad(ray, vec3(bMin.x, bMin.y, bMax.z), vec3(bMax.x, bMax.y, bMax.z), vec3(0, 0, -1), backRoomsWall, false, hit) || didHit;
+    didHit = hitQuad(ray, vec3(bMin.x, bMin.y, bMin.z), vec3(bMax.x, bMax.y, bMin.z), vec3(0, 0, 1), backRoomsWall, false, hit) || didHit;
 
-    Light l;
-    l.minP = lightMinBox;
-    l.maxP = lightMaxBox;
-    gLights[gLightCount++] = l;
+    vec3 lMin = vec3(-0.6, bMax.y - 0.01, 1.2);
+    vec3 lMax = vec3( 0.6, bMax.y - 0.01, 2.8);
 
-    didHit = hitQuad(ray, lightMinBox, lightMaxBox, vec3(0,-1,0), lightColor, true, hit) || didHit; // Light
+    if (gLightCount < MAX_LIGHTS) {
+        Light l;
+        l.minP = lMin;
+        l.maxP = lMax;
+        gLights[gLightCount++] = l;
+    }
 
+    didHit = hitQuad(ray, lMin, lMax, vec3(0, -1, 0), lightColor, true, hit) || didHit;
     didHit = hitBVH(ray, hit) || didHit;
 
-    vec3 boxMin = vec3(-0.4, 0.0, 0.33);
-    vec3 boxMax = vec3( 0.0, 0.6, 0.53);
-    vec3 boxColor = vec3(0.8);
-
-    // --------------- FURNITURE ---------------------------
-
-    #ifdef FURNITURE
-        // BOX
-        didHit = hitQuad(ray, vec3(boxMin.x, boxMax.y, boxMin.z), vec3(boxMax.x, boxMax.y, boxMax.z), vec3(0,-1,0), boxColor, false, hit) || didHit;
-        didHit = hitQuad(ray, vec3(boxMin.x, boxMin.y, boxMin.z), vec3(boxMax.x, boxMin.y, boxMax.z), vec3(0,1,0), boxColor, false, hit) || didHit;
-        didHit = hitQuad(ray, vec3(boxMin.x, boxMin.y, boxMin.z), vec3(boxMin.x, boxMax.y, boxMax.z), vec3(1,0,0), boxColor, false, hit) || didHit;
-        didHit = hitQuad(ray, vec3(boxMax.x, boxMin.y, boxMin.z), vec3(boxMax.x, boxMax.y, boxMax.z), vec3(-1,0,0), boxColor, false, hit) || didHit;
-        didHit = hitQuad(ray, vec3(boxMin.x, boxMin.y, boxMax.z), vec3(boxMax.x, boxMax.y, boxMax.z), vec3(0,0,-1), boxColor, false, hit) || didHit;
-        didHit = hitQuad(ray, vec3(boxMin.x, boxMin.y, boxMin.z), vec3(boxMax.x, boxMax.y, boxMin.z), vec3(0,0,1), boxColor, false, hit) || didHit;
-    
-    #endif
-
     return didHit;
-
 }
 
 bool hitMap(Ray ray, inout HitInfo hit) {
@@ -449,16 +421,9 @@ bool hitMap(Ray ray, inout HitInfo hit) {
 }
 
 bool hitScene(Ray ray, inout HitInfo hit) {
-
     hit.t = 1e30;
     gLightCount = 0;
-    bool didHit = false;
-
-    didHit = hitMap(ray, hit);
-    didHit = hitBVH(ray, hit) || didHit;
-
-    return didHit;
-
+    return hitMap(ray, hit);
 }
 
 Ray generateRay(ivec2 pixel, ivec2 size) {
@@ -688,58 +653,45 @@ vec4 sampleHistory(vec2 pixelCoord, ivec2 size){
 }
 
 void main() {
-
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
-
     ivec2 size  = imageSize(outImage);
 
     rngState = uint(pixel.x) * 1973u + uint(pixel.y) * 9277u + pc.frameCount * 26699u + 1u;
 
     if (pixel.x >= size.x || pixel.y >= size.y) return;
 
-    // Center of pixel
-    vec2 centerUV = (vec2(pixel) + 0.5) / vec2(size) * 2.0 - 1.0;
-    centerUV.x *= float(size.x) / float(size.y);
-    centerUV.y = -centerUV.y;
-
-    // Temporal projection ray
-    Ray primaryRay;
-    primaryRay.origin = camera.position.xyz;
-    primaryRay.dir = normalize(camera.forward.xyz + centerUV.x * camera.right.xyz + centerUV.y * camera.up.xyz);
-
-    HitInfo primaryHit;
-    bool primaryDidHit = hitScene(primaryRay, primaryHit);
-    vec3 primaryWorldPos = primaryRay.origin + primaryHit.t * primaryRay.dir; 
-    float currentDepth    = primaryDidHit ? dot(primaryWorldPos - camera.position.xyz, camera.forward.xyz) : 1e30;
-
-    const int SAMPLES = 1;
-
     vec3 col = vec3(0.0);
-
     for (int s = 0; s < pc.samples; s++) {
-
         Ray ray = generateRay(pixel, size);
         col += tracePath(ray);
-
     }
-
     col /= float(pc.samples);   
 
+   
     if (pc.useTAA == 1) {
+        vec2 centerUV = (vec2(pixel) + 0.5) / vec2(size) * 2.0 - 1.0;
+        centerUV.x *= float(size.x) / float(size.y);
+        centerUV.y = -centerUV.y;
+
+        Ray primaryRay;
+        primaryRay.origin = camera.position.xyz;
+        primaryRay.dir = normalize(camera.forward.xyz + centerUV.x * camera.right.xyz + centerUV.y * camera.up.xyz);
+
+        HitInfo primaryHit;
+        bool primaryDidHit = hitScene(primaryRay, primaryHit);
+        vec3 primaryWorldPos = primaryRay.origin + primaryHit.t * primaryRay.dir; 
+        float currentDepth   = primaryDidHit ? dot(primaryWorldPos - camera.position.xyz, camera.forward.xyz) : 1e30;
 
         float historyWeight = 0.0;
-        vec4  history        = vec4(-1.0);
+        vec4  history       = vec4(-1.0);
 
         if (primaryDidHit) {
-
             vec3 reproj = reprojectToPrevPixel(primaryWorldPos, size);
 
             if (reproj.z > 0.0) {
-
                 history = sampleHistory(reproj.xy, size);
 
                 if (history.r >= 0.0) {
-
                     float expectedPrevDepth = dot(primaryWorldPos - camera.prevPosition.xyz, camera.prevForward.xyz);
                     float storedPrevDepth   = history.a;
                     float depthDiff = abs(expectedPrevDepth - storedPrevDepth) / max(expectedPrevDepth, 0.001);
@@ -755,11 +707,9 @@ void main() {
         imageStore(outImage, pixel, vec4(accumulated, currentDepth));
 
     } else {
-
+       
         vec3 oldColor    = imageLoad(outImage, pixel).rgb;
         vec3 accumulated = (oldColor * float(pc.frameCount) + col) / float(pc.frameCount + 1);
-        imageStore(outImage, pixel, vec4(accumulated, currentDepth));
-
+        imageStore(outImage, pixel, vec4(accumulated, 1.0));
     }
-
 }
