@@ -1,6 +1,5 @@
 #version 450
 
-
 struct Triangle { vec4 v0, v1, v2, normal; };
 struct BVHNode {
     vec3 aabbMin; int leftChild;
@@ -14,8 +13,6 @@ layout(rgba32f, set = 0, binding = 0) uniform image2D outputImage;
 
 layout(binding = 1) readonly buffer TriangleBuffer { Triangle triangles[]; } triBuffer;
 layout(binding = 2) readonly buffer BVHBuffer { BVHNode nodes[]; } bvhBuffer;
-
-
 
 layout(binding = 3) uniform CameraUBO {
     vec4 position;
@@ -59,8 +56,8 @@ struct Light {
 };
 
 const float CELL_SIZE = 4.0;
-const float ROOM_H = 2.2;
-const float LIGHT_SIZE = 1.2;
+const float ROOM_H = 2.4;
+const float WALL_THICKNESS = 0.32; 
 
 const int WALL_RIGHT = 1;
 const int WALL_LEFT = 2;
@@ -72,23 +69,94 @@ const int PILLAR = 32;
 const int MAP_W = 8;
 const int MAP_H = 8;
 
+
 const int levelMap[64] = int[](
-    WALL_LEFT | ROOM_LIGHT, 0, WALL_FAR, WALL_RIGHT, WALL_LEFT | ROOM_LIGHT, 0, WALL_FAR, WALL_RIGHT,
-    WALL_LEFT, PILLAR, WALL_RIGHT, WALL_LEFT | ROOM_LIGHT, 0, WALL_RIGHT, WALL_LEFT, WALL_RIGHT,
-    WALL_LEFT | WALL_FAR, 0, 0, 0, WALL_FAR, 0, PILLAR | ROOM_LIGHT, WALL_RIGHT,
-    WALL_LEFT, WALL_RIGHT, WALL_LEFT | WALL_FAR, 0, 0, WALL_RIGHT | WALL_FAR, 0, WALL_RIGHT,
-    WALL_LEFT, 0, 0, WALL_RIGHT | ROOM_LIGHT, WALL_LEFT, 0, 0, WALL_RIGHT | ROOM_LIGHT,
-    WALL_LEFT | WALL_FAR, 0, PILLAR, 0, 0, WALL_FAR, 0, WALL_RIGHT,
-    WALL_LEFT, 0, WALL_RIGHT | WALL_FAR, WALL_LEFT | ROOM_LIGHT, 0, 0, PILLAR, WALL_RIGHT,
-    WALL_LEFT | WALL_NEAR, WALL_NEAR | ROOM_LIGHT, WALL_NEAR, WALL_NEAR | WALL_RIGHT,
-    WALL_LEFT | WALL_NEAR, WALL_NEAR | ROOM_LIGHT, WALL_NEAR, WALL_RIGHT | WALL_NEAR
+
+    WALL_NEAR | WALL_LEFT | WALL_RIGHT, 
+    WALL_NEAR | WALL_LEFT | WALL_RIGHT | ROOM_LIGHT, 
+    WALL_NEAR | WALL_LEFT, 
+    WALL_NEAR | ROOM_LIGHT, 
+    WALL_NEAR, 
+    WALL_NEAR | ROOM_LIGHT, 
+    WALL_NEAR | WALL_FAR, 
+    WALL_NEAR | WALL_RIGHT | ROOM_LIGHT,
+
+    WALL_LEFT | WALL_RIGHT, 
+    WALL_LEFT | WALL_RIGHT, 
+    0, 
+    PILLAR, 
+    0, 
+    WALL_RIGHT, 
+    WALL_LEFT | WALL_NEAR, 
+    WALL_RIGHT | ROOM_LIGHT,
+
+    
+    WALL_LEFT | WALL_RIGHT | ROOM_LIGHT, 
+    WALL_LEFT | WALL_RIGHT | ROOM_LIGHT, 
+    WALL_FAR, 
+    ROOM_LIGHT, 
+    PILLAR, 
+    ROOM_LIGHT, 
+    0, 
+    WALL_RIGHT,
+
+    
+    WALL_LEFT | WALL_FAR, 
+    WALL_LEFT, 
+    WALL_NEAR | WALL_FAR, 
+    0, 
+    WALL_FAR, 
+    WALL_RIGHT, 
+    PILLAR | ROOM_LIGHT, 
+    WALL_RIGHT,
+
+    
+    WALL_LEFT | WALL_NEAR, 
+    WALL_LEFT | WALL_RIGHT | ROOM_LIGHT, 
+    WALL_FAR | WALL_NEAR, 
+    ROOM_LIGHT, 
+    WALL_NEAR | PILLAR, 
+    0, 
+    WALL_FAR, 
+    WALL_RIGHT | ROOM_LIGHT,
+
+   
+    WALL_LEFT | WALL_RIGHT | ROOM_LIGHT, 
+    WALL_LEFT | WALL_RIGHT, 
+    0, 
+    WALL_RIGHT, 
+    WALL_LEFT | ROOM_LIGHT, 
+    PILLAR, 
+    WALL_NEAR, 
+    WALL_RIGHT,
+
+    
+    WALL_LEFT | WALL_RIGHT, 
+    WALL_LEFT | WALL_RIGHT | ROOM_LIGHT, 
+    WALL_FAR, 
+    ROOM_LIGHT, 
+    0, 
+    WALL_FAR, 
+    ROOM_LIGHT, 
+    WALL_RIGHT,
+
+   
+    WALL_FAR | WALL_LEFT | WALL_RIGHT, 
+    WALL_FAR | WALL_LEFT | WALL_RIGHT, 
+    WALL_FAR | WALL_NEAR, 
+    WALL_FAR | ROOM_LIGHT, 
+    WALL_FAR | PILLAR, 
+    WALL_FAR | WALL_NEAR, 
+    WALL_FAR, 
+    WALL_FAR | WALL_RIGHT | ROOM_LIGHT
 );
 
-const vec3 WALL_COLOR = vec3(0.78, 0.68, 0.12);
-const vec3 FLOOR_COLOR = vec3(0.48, 0.40, 0.08);
-const vec3 ROOF_COLOR = vec3(0.68, 0.62, 0.22);
-const vec3 LIGHT_COLOR = vec3(0.96, 0.98, 0.65);
-const vec3 LIGHT_RADIANCE = vec3(15.0);
+
+const vec3 WALL_COLOR = vec3(0.77, 0.69, 0.32);       
+const vec3 FLOOR_COLOR = vec3(0.54, 0.47, 0.25);      
+const vec3 ROOF_COLOR = vec3(0.80, 0.78, 0.64);       
+const vec3 LIGHT_COLOR = vec3(1.0, 0.98, 0.88);       
+const vec3 LIGHT_RADIANCE = vec3(17.0);
 
 const int MAX_BOUNCES = 2;
 const int MAX_LIGHTS = 64;
@@ -124,10 +192,12 @@ vec3 cosineSampleHemisphere(vec3 normal) {
     return normalize(tangent * local.x + bitangent * local.y + normal * local.z);
 }
 
+
 void cellLightBounds(vec3 o, out vec3 lightMin, out vec3 lightMax) {
-    float margin = (CELL_SIZE - LIGHT_SIZE) * 0.5;
-    lightMin = o + vec3(margin + 0.2, ROOM_H, margin - 0.2);
-    lightMax = o + vec3(margin + LIGHT_SIZE - 0.2, ROOM_H, margin + LIGHT_SIZE + 0.2);
+    float marginX = (CELL_SIZE - 0.8) * 0.5;
+    float marginZ = (CELL_SIZE - 1.6) * 0.5;
+    lightMin = o + vec3(marginX, ROOM_H, marginZ);
+    lightMax = o + vec3(marginX + 0.8, ROOM_H, marginZ + 1.6);
 }
 
 bool intersectQuad(Ray ray, vec3 minP, vec3 maxP, vec3 normal, vec3 color, bool isLight, inout HitInfo hit) {
@@ -155,6 +225,40 @@ bool intersectQuad(Ray ray, vec3 minP, vec3 maxP, vec3 normal, vec3 color, bool 
     return true;
 }
 
+bool intersectBox(Ray ray, vec3 bMin, vec3 bMax, vec3 color, inout HitInfo hit) {
+    vec3 safeDir = mix(sign(ray.dir) * 1e-5, ray.dir, greaterThan(abs(ray.dir), vec3(1e-5)));
+    vec3 invDir = 1.0 / safeDir;
+    vec3 t0 = (bMin - ray.origin) * invDir;
+    vec3 t1 = (bMax - ray.origin) * invDir;
+    vec3 tNear = min(t0, t1);
+    vec3 tFar  = max(t0, t1);
+
+    float tEnter = max(max(tNear.x, tNear.y), tNear.z);
+    float tExit  = min(min(tFar.x, tFar.y), tFar.z);
+
+    if (tEnter > tExit || tExit < 0.001) return false;
+
+    float t = tEnter > 0.001 ? tEnter : tExit;
+    if (t < 0.001 || t >= hit.t) return false;
+
+    vec3 norm = vec3(0.0);
+    if (tEnter > 0.001) {
+        if (tNear.x > tNear.y && tNear.x > tNear.z)      norm = vec3(-sign(ray.dir.x), 0.0, 0.0);
+        else if (tNear.y > tNear.z)                     norm = vec3(0.0, -sign(ray.dir.y), 0.0);
+        else                                            norm = vec3(0.0, 0.0, -sign(ray.dir.z));
+    } else {
+        if (tFar.x < tFar.y && tFar.x < tFar.z)          norm = vec3(sign(ray.dir.x), 0.0, 0.0);
+        else if (tFar.y < tFar.z)                       norm = vec3(0.0, sign(ray.dir.y), 0.0);
+        else                                            norm = vec3(0.0, 0.0, sign(ray.dir.z));
+    }
+
+    hit.t = t;
+    hit.normal = dot(norm, ray.dir) < 0.0 ? norm : -norm;
+    hit.color = color;
+    hit.isLight = false;
+    return true;
+}
+
 bool intersectCell(Ray ray, int col, int row, inout HitInfo hit) {
     if (col < 0 || col >= MAP_W || row < 0 || row >= MAP_H) return false;
 
@@ -162,49 +266,58 @@ bool intersectCell(Ray ray, int col, int row, inout HitInfo hit) {
     vec3 o = vec3(float(col), 0.0, float(row)) * CELL_SIZE;
 
     bool hasLight = (type & ROOM_LIGHT) != 0;
-    bool hasRight = (type & WALL_RIGHT) != 0;
-    bool hasLeft = (type & WALL_LEFT) != 0;
-    bool hasFar = (type & WALL_FAR) != 0;
-    bool hasNear = (type & WALL_NEAR) != 0;
     bool hasPillar = (type & PILLAR) != 0;
+
+    bool hasRight = (type & WALL_RIGHT) != 0 || (col + 1 < MAP_W && (levelMap[row * MAP_W + col + 1] & WALL_LEFT) != 0);
+    bool hasLeft  = (type & WALL_LEFT)  != 0 || (col > 0        && (levelMap[row * MAP_W + col - 1] & WALL_RIGHT) != 0);
+    bool hasFar   = (type & WALL_FAR)   != 0 || (row + 1 < MAP_H && (levelMap[(row + 1) * MAP_W + col] & WALL_NEAR) != 0);
+    bool hasNear  = (type & WALL_NEAR)  != 0 || (row > 0        && (levelMap[(row - 1) * MAP_W + col] & WALL_FAR) != 0);
 
     bool didHit = false;
 
     didHit = intersectQuad(ray, o, o + vec3(CELL_SIZE, 0.0, CELL_SIZE), vec3(0, 1, 0), FLOOR_COLOR, false, hit) || didHit;
+
 
     if (hasLight) {
         vec3 lMin, lMax;
         cellLightBounds(o, lMin, lMax);
 
         didHit = intersectQuad(ray, lMin, lMax, vec3(0, -1, 0), LIGHT_COLOR, true, hit) || didHit;
-        didHit = intersectQuad(ray, o + vec3(0, ROOM_H, 0), o + vec3(CELL_SIZE, ROOM_H, lMin.z - o.z), vec3(0, -1, 0), ROOF_COLOR, false, hit) || didHit;
-        didHit = intersectQuad(ray, o + vec3(0, ROOM_H, lMax.z - o.z), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(0, -1, 0), ROOF_COLOR, false, hit) || didHit;
-        didHit = intersectQuad(ray, o + vec3(0, ROOM_H, lMin.z - o.z), vec3(lMin.x, ROOM_H, lMax.z), vec3(0, -1, 0), ROOF_COLOR, false, hit) || didHit;
-        didHit = intersectQuad(ray, vec3(lMax.x, ROOM_H, lMin.z), o + vec3(CELL_SIZE, ROOM_H, lMax.z - o.z), vec3(0, -1, 0), ROOF_COLOR, false, hit) || didHit;
+        didHit = intersectQuad(ray, o + vec3(0, ROOM_H, 0), vec3(o.x + CELL_SIZE, ROOM_H, lMin.z), vec3(0, -1, 0), ROOF_COLOR, false, hit) || didHit;
+        didHit = intersectQuad(ray, vec3(o.x, ROOM_H, lMax.z), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(0, -1, 0), ROOF_COLOR, false, hit) || didHit;
+        didHit = intersectQuad(ray, vec3(o.x, ROOM_H, lMin.z), vec3(lMin.x, ROOM_H, lMax.z), vec3(0, -1, 0), ROOF_COLOR, false, hit) || didHit;
+        didHit = intersectQuad(ray, vec3(lMax.x, ROOM_H, lMin.z), vec3(o.x + CELL_SIZE, ROOM_H, lMax.z), vec3(0, -1, 0), ROOF_COLOR, false, hit) || didHit;
     } else {
         didHit = intersectQuad(ray, o + vec3(0, ROOM_H, 0), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(0, -1, 0), ROOF_COLOR, false, hit) || didHit;
     }
 
-    if (hasRight) didHit = intersectQuad(ray, o + vec3(CELL_SIZE, 0, 0), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(-1, 0, 0), WALL_COLOR, false, hit) || didHit;
-    if (hasLeft) didHit = intersectQuad(ray, o, o + vec3(0, ROOM_H, CELL_SIZE), vec3(1, 0, 0), WALL_COLOR, false, hit) || didHit;
-    if (hasFar) didHit = intersectQuad(ray, o + vec3(0, 0, CELL_SIZE), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), vec3(0, 0, -1), WALL_COLOR, false, hit) || didHit;
-    if (hasNear) didHit = intersectQuad(ray, o, o + vec3(CELL_SIZE, ROOM_H, 0), vec3(0, 0, 1), WALL_COLOR, false, hit) || didHit;
+    float halfT = WALL_THICKNESS * 0.5;
 
+    
+    if (hasLeft) {
+        didHit = intersectBox(ray, o, o + vec3(halfT, ROOM_H, CELL_SIZE), WALL_COLOR, hit) || didHit;
+    }
+    if (hasRight) {
+        didHit = intersectBox(ray, o + vec3(CELL_SIZE - halfT, 0.0, 0.0), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), WALL_COLOR, hit) || didHit;
+    }
+    if (hasNear) {
+        didHit = intersectBox(ray, o, o + vec3(CELL_SIZE, ROOM_H, halfT), WALL_COLOR, hit) || didHit;
+    }
+    if (hasFar) {
+        didHit = intersectBox(ray, o + vec3(0.0, 0.0, CELL_SIZE - halfT), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), WALL_COLOR, hit) || didHit;
+    }
+
+    
     if (hasPillar) {
-        vec3 pMin = o + vec3(1.6, 0.0, 1.6);
-        vec3 pMax = o + vec3(2.4, ROOM_H, 2.4);
-
-        didHit = intersectQuad(ray, vec3(pMin.x, 0, pMin.z), vec3(pMax.x, ROOM_H, pMin.z), vec3(0, 0, -1), WALL_COLOR, false, hit) || didHit;
-        didHit = intersectQuad(ray, vec3(pMin.x, 0, pMax.z), vec3(pMax.x, ROOM_H, pMax.z), vec3(0, 0, 1), WALL_COLOR, false, hit) || didHit;
-        didHit = intersectQuad(ray, vec3(pMin.x, 0, pMin.z), vec3(pMin.x, ROOM_H, pMax.z), vec3(-1, 0, 0), WALL_COLOR, false, hit) || didHit;
-        didHit = intersectQuad(ray, vec3(pMax.x, 0, pMin.z), vec3(pMax.x, ROOM_H, pMax.z), vec3(1, 0, 0), WALL_COLOR, false, hit) || didHit;
+        vec3 pMin = o + vec3(1.5, 0.0, 1.5);
+        vec3 pMax = o + vec3(2.5, ROOM_H, 2.5);
+        didHit = intersectBox(ray, pMin, pMax, WALL_COLOR, hit) || didHit;
     }
 
     return didHit;
 }
 
 bool traverseGrid(Ray ray, inout HitInfo hit) {
-
     vec3 gridMin = vec3(0.0);
     vec3 gridMax = vec3(float(MAP_W) * CELL_SIZE, ROOM_H, float(MAP_H) * CELL_SIZE);
 
@@ -241,32 +354,100 @@ bool traverseGrid(Ray ray, inout HitInfo hit) {
     bool didHit = false;
 
     while (cellX >= 0 && cellX < MAP_W && cellZ >= 0 && cellZ < MAP_H) {
-        
         didHit = intersectCell(ray, cellX, cellZ, hit) || didHit;
 
         float tNextCell = min(tMaxX, tMaxZ);
-        
         if (didHit && hit.t <= tNextCell) break;
 
         if (tMaxX < tMaxZ) {
-            
             tMaxX += tDeltaX;
             cellX += stepX;
-        
         } else {
-
             tMaxZ += tDeltaZ;
             cellZ += stepZ;
         }
     }
 
     return didHit;
+}
 
+bool hitTriangle(Ray ray, Triangle tri, inout HitInfo closest) {
+    vec3 v0 = tri.v0.xyz;
+    vec3 v1 = tri.v1.xyz;
+    vec3 v2 = tri.v2.xyz;
+
+    vec3 e1 = v1 - v0;
+    vec3 e2 = v2 - v0;
+    vec3 h = cross(ray.dir, e2);
+    float a = dot(e1, h);
+
+    if (abs(a) < 0.0001) return false;
+
+    float f = 1.0 / a;
+    vec3 s = ray.origin - v0;
+    float u = f * dot(s, h);
+    if (u < 0.0 || u > 1.0) return false;
+
+    vec3 q = cross(s, e1);
+    float v = f * dot(ray.dir, q);
+    if (v < 0.0 || u + v > 1.0) return false;
+
+    float t = f * dot(e2, q);
+    if (t < 0.001 || t >= closest.t) return false;
+
+    closest.t = t;
+    closest.normal = tri.normal.xyz;
+    closest.color = vec3(0.45, 0.27, 0.12);
+    closest.isLight = false;
+    return true;
+}
+
+bool hitAABB(Ray ray, vec3 aabbMin, vec3 aabbMax, float tMax) {
+    vec3 safeDir = mix(sign(ray.dir) * 1e-5, ray.dir, greaterThan(abs(ray.dir), vec3(1e-5)));
+    vec3 invDir = 1.0 / safeDir;
+    vec3 t0 = (aabbMin - ray.origin) * invDir;
+    vec3 t1 = (aabbMax - ray.origin) * invDir;
+    vec3 tMin = min(t0, t1);
+    vec3 tMax3 = max(t0, t1);
+
+    float tEnter = max(max(tMin.x, tMin.y), tMin.z);
+    float tExit  = min(min(tMax3.x, tMax3.y), tMax3.z);
+
+    return tEnter <= tExit && tExit > 0.001 && tEnter < tMax;
+}
+
+bool hitBVH(Ray ray, inout HitInfo hit) {
+    if (bvhBuffer.nodes.length() == 0) return false;
+
+    bool didHit = false;
+    int stack[32];
+    int stackPtr = 0;
+    stack[stackPtr++] = 0;
+
+    while (stackPtr > 0) {
+        int nodeIdx = stack[--stackPtr];
+        BVHNode node = bvhBuffer.nodes[nodeIdx];
+
+        if (!hitAABB(ray, node.aabbMin, node.aabbMax, hit.t)) continue;
+
+        if (node.triangleCount > 0) {
+            for (int i = node.triangleStart; i < node.triangleStart + node.triangleCount; i++) {
+                didHit = hitTriangle(ray, triBuffer.triangles[i], hit) || didHit;
+            }
+        } else {
+            stack[stackPtr++] = node.leftChild;
+            stack[stackPtr++] = node.rightChild;
+        }
+    }
+
+    return didHit;
 }
 
 bool intersectScene(Ray ray, inout HitInfo hit) {
     hit.t = 1e30;
-    return traverseGrid(ray, hit);
+    bool hitGrid = traverseGrid(ray, hit);
+    bool hitMeshes = hitBVH(ray, hit);
+    return hitGrid || hitMeshes;
 }
 
 void buildLightList() {
@@ -285,31 +466,47 @@ void buildLightList() {
     }
 }
 
+
 vec3 weatheredFloorColor(vec3 p, vec3 baseColor) {
     float fiber = fract(sin(dot(floor(p.xz * 60.0), vec2(12.9898, 78.233))) * 43758.5453);
     float stainNoise = fract(sin(dot(floor(p.xz * 0.7), vec2(43.12, 19.82))) * 12345.67);
     float grime = fract(sin(dot(floor(p.xz * 2.2), vec2(91.7, 33.1))) * 54321.12);
 
-    vec3 dirtyBrown = vec3(0.35, 0.26, 0.04);
-    vec3 color = mix(baseColor, dirtyBrown, stainNoise * grime * 0.75);
-    return color * mix(0.88, 1.0, fiber);
+    vec3 dirtyBrown = vec3(0.38, 0.29, 0.12);
+    vec3 color = mix(baseColor, dirtyBrown, stainNoise * grime * 0.6);
+    return color * mix(0.92, 1.0, fiber);
 }
+
 
 vec3 weatheredWallColor(vec3 p, vec3 normal, vec3 baseColor) {
     float wallCoord = abs(normal.x) > 0.5 ? p.z : p.x;
-    float seam = smoothstep(0.0, 0.03, abs(fract(wallCoord) - 0.5));
-    float stripes = sin(wallCoord * 32.0) * 0.06 + 0.94;
+    float seam = smoothstep(0.0, 0.02, abs(fract(wallCoord) - 0.5));
+    float stripes = sin(wallCoord * 28.0) * 0.04 + 0.96;
 
-    float nicotineNoise = fract(sin(dot(floor(vec2(wallCoord * 3.0, p.y * 1.5)), vec2(17.3, 71.9))) * 23421.63);
-    vec3 nicotineYellow = vec3(0.85, 0.72, 0.08);
-    vec3 color = mix(baseColor, nicotineYellow, nicotineNoise * 0.35);
+    float nicotineNoise = fract(sin(dot(floor(vec2(wallCoord * 2.5, p.y * 1.5)), vec2(17.3, 71.9))) * 23421.63);
+    vec3 nicotineYellow = vec3(0.82, 0.72, 0.22);
+    vec3 color = mix(baseColor, nicotineYellow, nicotineNoise * 0.25);
 
-    float baseboardDirt = smoothstep(0.0, 0.5, p.y);
-    return color * mix(0.65, 1.0, seam) * stripes * mix(0.55, 1.0, baseboardDirt);
+    float baseboardDirt = smoothstep(0.0, 0.4, p.y);
+    return color * mix(0.72, 1.0, seam) * stripes * mix(0.65, 1.0, baseboardDirt);
+}
+
+
+vec3 ceilingTileColor(vec3 p, vec3 baseColor) {
+    vec2 tileUV = fract(p.xz / 0.8);
+    vec2 grid = smoothstep(0.0, 0.04, tileUV) * (1.0 - smoothstep(0.96, 1.0, tileUV));
+    float tBar = min(grid.x, grid.y);
+
+    float panelVariance = fract(sin(dot(floor(p.xz / 0.8), vec2(15.1, 37.7))) * 43758.54);
+    vec3 tile = baseColor * mix(0.94, 1.04, panelVariance);
+    vec3 gridMetal = baseColor * 0.45; 
+
+    return mix(gridMetal, tile, tBar);
 }
 
 vec3 applySurfaceDetail(vec3 p, vec3 normal, vec3 baseColor) {
     if (normal.y > 0.8) return weatheredFloorColor(p, baseColor);
+    if (normal.y < -0.8) return ceilingTileColor(p, baseColor);
     if (abs(normal.y) < 0.2) return weatheredWallColor(p, normal, baseColor);
     return baseColor;
 }
@@ -317,7 +514,7 @@ vec3 applySurfaceDetail(vec3 p, vec3 normal, vec3 baseColor) {
 Ray generateCameraRay(ivec2 pixel, ivec2 size) {
     vec2 jitter = vec2(randomFloat() - 0.5, randomFloat() - 0.5);
 
-    vec2 uv = pc.jittering == 1
+    vec2 uv = (pc.jittering == 1 || pc.useTAA == 1)
         ? (vec2(pixel) + 0.5 + jitter) / vec2(size) * 2.0 - 1.0
         : (vec2(pixel) + 0.5) / vec2(size) * 2.0 - 1.0;
 
@@ -350,8 +547,42 @@ Ray generateCameraRay(ivec2 pixel, ivec2 size) {
 vec3 sampleDirectLight(vec3 hitPoint, vec3 hitNormal, vec3 surfaceColor) {
     if (gLightCount == 0) return vec3(0.0);
 
-    int lightIdx = clamp(int(randomFloat() * float(gLightCount)), 0, gLightCount - 1);
-    Light light = gLights[lightIdx];
+    float weights[MAX_LIGHTS];
+    float totalWeight = 0.0;
+
+    for (int i = 0; i < gLightCount; i++) {
+        vec3 center = 0.5 * (gLights[i].minP + gLights[i].maxP);
+        vec3 toCenter = center - hitPoint;
+        float d2 = max(dot(toCenter, toCenter), 0.01);
+
+        vec3 dir = toCenter / sqrt(d2);
+        float cosTheta = max(dot(hitNormal, dir), 0.0);
+        float cosLight = max(dot(vec3(0.0, -1.0, 0.0), -dir), 0.0);
+
+        float area = (gLights[i].maxP.x - gLights[i].minP.x) * (gLights[i].maxP.z - gLights[i].minP.z);
+        float w = (area * cosTheta * cosLight) / d2;
+        w = max(w, 0.0001);
+
+        weights[i] = w;
+        totalWeight += w;
+    }
+
+    if (totalWeight <= 0.0) return vec3(0.0);
+
+    float r = randomFloat() * totalWeight;
+    float cumulative = 0.0;
+    int chosenIdx = 0;
+
+    for (int i = 0; i < gLightCount; i++) {
+        cumulative += weights[i];
+        if (r <= cumulative || i == gLightCount - 1) {
+            chosenIdx = i;
+            break;
+        }
+    }
+
+    Light light = gLights[chosenIdx];
+    float pLight = weights[chosenIdx] / totalWeight;
 
     vec3 lightPoint = vec3(
         mix(light.minP.x, light.maxP.x, randomFloat()),
@@ -378,7 +609,7 @@ vec3 sampleDirectLight(vec3 hitPoint, vec3 hitNormal, vec3 surfaceColor) {
     float lightArea = (light.maxP.x - light.minP.x) * (light.maxP.z - light.minP.z);
     vec3 brdf = surfaceColor / PI;
 
-    return float(gLightCount) * LIGHT_RADIANCE * brdf * NdotL * NdotLLight * lightArea / distSqr;
+    return (LIGHT_RADIANCE * brdf * NdotL * NdotLLight * lightArea) / (distSqr * pLight);
 }
 
 vec3 tracePath(Ray ray) {
@@ -401,7 +632,11 @@ vec3 tracePath(Ray ray) {
         vec3 hitColor = applySurfaceDetail(hitPoint, hitNormal, hit.color);
 
         if (pc.useNEE == 1) {
-            color += throughput * sampleDirectLight(hitPoint, hitNormal, hitColor);
+            vec3 direct = sampleDirectLight(hitPoint, hitNormal, hitColor);
+            if (bounce > 0) {
+                direct = min(direct, vec3(3.0)); 
+            }
+            color += throughput * direct;
         }
 
         ray.origin = hitPoint + hitNormal * 0.001;
@@ -417,7 +652,6 @@ vec3 tracePath(Ray ray) {
 }
 
 vec3 reprojectToPreviousPixel(vec3 worldPos, ivec2 size) {
- 
     vec3 rel = worldPos - camera.prevPosition.xyz;
     float t = dot(rel, camera.prevForward.xyz);
     if (t <= 0.001) return vec3(-1.0, -1.0, 0.0);
@@ -428,7 +662,6 @@ vec3 reprojectToPreviousPixel(vec3 worldPos, ivec2 size) {
 
     vec2 uv = vec2(x, y) * 0.5 + 0.5;
     return vec3(uv * vec2(size) - 0.5, t);
-
 }
 
 vec4 sampleHistory(vec2 pixelCoord, ivec2 size) {
@@ -447,13 +680,30 @@ vec4 sampleHistory(vec2 pixelCoord, ivec2 size) {
 
     vec4 top = mix(imageLoad(previousFrameImage, p00), imageLoad(previousFrameImage, p10), f.x);
     vec4 bottom = mix(imageLoad(previousFrameImage, p01), imageLoad(previousFrameImage, p11), f.x);
+
     return mix(top, bottom, f.y);
 }
 
 void accumulateAverage(ivec2 pixel, vec3 col) {
-    vec3 oldColor = imageLoad(outputImage, pixel).rgb;
-    vec3 accumulated = (oldColor * float(pc.frameCount) + col) / float(pc.frameCount + 1);
-    imageStore(outputImage, pixel, vec4(accumulated, 1.0));
+    vec2 centerUV = (vec2(pixel) + 0.5) / vec2(imageSize(outputImage)) * 2.0 - 1.0;
+    centerUV.x *= float(imageSize(outputImage).x) / float(imageSize(outputImage).y);
+    centerUV.y = -centerUV.y;
+
+    Ray primaryRay;
+    primaryRay.origin = camera.position.xyz;
+    primaryRay.dir = normalize(camera.forward.xyz + centerUV.x * camera.right.xyz + centerUV.y * camera.up.xyz);
+
+    HitInfo primaryHit;
+    bool didHit = intersectScene(primaryRay, primaryHit);
+    vec3 worldPos = primaryRay.origin + primaryHit.t * primaryRay.dir;
+    float depth = didHit ? dot(worldPos - camera.position.xyz, camera.forward.xyz) : 1e30;
+
+    vec3 oldColor = imageLoad(previousFrameImage, pixel).rgb;
+    
+    float weight = 1.0 / max(float(pc.frameCount), 1.0);
+    vec3 accumulated = mix(oldColor, col, weight);
+
+    imageStore(outputImage, pixel, vec4(accumulated, depth));
 }
 
 void accumulateTAA(ivec2 pixel, ivec2 size, vec3 col) {
@@ -473,7 +723,7 @@ void accumulateTAA(ivec2 pixel, ivec2 size, vec3 col) {
     float historyWeight = 0.0;
     vec4 history = vec4(-1.0);
 
-    if (didHit) {
+    if (didHit && pc.frameCount > 1) {
         vec3 reprojected = reprojectToPreviousPixel(worldPos, size);
 
         if (reprojected.z > 0.0) {
@@ -512,6 +762,9 @@ void main() {
 
     col /= float(pc.samples);
 
-    if (pc.useTAA == 1) accumulateTAA(pixel, size, col);
-    else accumulateAverage(pixel, col);
+    if (pc.useTAA == 1) {
+        accumulateTAA(pixel, size, col);
+    } else {
+        accumulateAverage(pixel, col);
+    }
 }

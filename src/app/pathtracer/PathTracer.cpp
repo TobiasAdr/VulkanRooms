@@ -27,7 +27,7 @@ void PathTracer::initVulkan() {
     transitionImageLayoutImmediate(previousImage, 
         VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 
-    loadMesh("../assets/bunny.obj");
+   // loadMesh("../assets/bunny.obj");
     createCameraBuffer();
     createComputeDescriptors();
     createComputePipeline();
