@@ -8,14 +8,24 @@
 #include <vector>
 
 struct PushConstants {
-    uint32_t jittering = 0;
-    uint32_t frameCount = 0;
+    uint32_t jittering;
+    uint32_t frameCount;
     uint32_t useNEE;
     uint32_t useRealLens;
     uint32_t useTAA;
     uint32_t samples;
     float focalLength;
     float apertureSize;
+    uint32_t useAtrous; 
+    int32_t atrousIterations; 
+};
+
+struct AtrousPushConstants {
+    int32_t stepSize;
+    float phiColor;
+    float phiNormal;
+    float phiDepth;
+    int32_t isFinalPass;
 };
 
 struct CameraUBO {
@@ -81,6 +91,18 @@ protected:
     VkDeviceMemory storageImageMemory = VK_NULL_HANDLE;
     VkImageView    storageImageView   = VK_NULL_HANDLE;
 
+    VkImage        pingPongImage       = VK_NULL_HANDLE;
+    VkDeviceMemory pingPongImageMemory = VK_NULL_HANDLE;
+    VkImageView    pingPongImageView   = VK_NULL_HANDLE;
+
+    VkImage        normalDepthImage       = VK_NULL_HANDLE;
+    VkDeviceMemory normalDepthImageMemory = VK_NULL_HANDLE;
+    VkImageView    normalDepthImageView   = VK_NULL_HANDLE;
+
+    VkImage        albedoImage       = VK_NULL_HANDLE;
+    VkDeviceMemory albedoImageMemory = VK_NULL_HANDLE;
+    VkImageView    albedoImageView   = VK_NULL_HANDLE;
+
     VkDescriptorSetLayout computeDescriptorSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool       descriptorPool             = VK_NULL_HANDLE;
     VkDescriptorSet        computeDescriptorSet       = VK_NULL_HANDLE;
@@ -88,11 +110,17 @@ protected:
     VkPipeline       computePipeline       = VK_NULL_HANDLE;
     VkPipelineLayout computePipelineLayout = VK_NULL_HANDLE;
 
-    VkPushConstantRange             pushConstantRange{};
-    VkPipelineShaderStageCreateInfo stageInfo{};
-    VkPipelineLayoutCreateInfo      layoutInfo{};
-    VkComputePipelineCreateInfo     pipelineInfo{};
-    VkShaderModule compModule;
+    VkPushConstantRange pushConstantRange{};
+
+    VkDescriptorSetLayout atrousDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool       atrousDescriptorPool      = VK_NULL_HANDLE;
+    VkDescriptorSet        atrousDescriptorSetPing   = VK_NULL_HANDLE;
+    VkDescriptorSet        atrousDescriptorSetPong   = VK_NULL_HANDLE;
+
+    VkPipeline       atrousPipeline       = VK_NULL_HANDLE;
+    VkPipelineLayout atrousPipelineLayout = VK_NULL_HANDLE;
+
+    VkPushConstantRange atrousPushConstantRange{};
 
     VkImage previousImage;
     VkDeviceMemory previousImageMemory;
@@ -122,15 +150,17 @@ protected:
     void cleanup()    override;
 
     void createStorageImage();
+    void createPingPongImage();
+    void createGBuffers();
     void createComputeDescriptors();
     void createDescriptorSetLayout();
     void createDescriptorPool();
     void createWrites();    
     
+    void createAtrousPipeline();
+    void createAtrousDescriptors();
+
     void pushConstants();
-    void createShaderInfo();
-    void createLayoutInfo();
-    void createPipelineInfo();
     void createComputePipeline();
     
     void createPreviousImage();

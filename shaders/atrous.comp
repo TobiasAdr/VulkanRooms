@@ -1,0 +1,83 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(rgba32f, set = 0, binding = 0) uniform readonly  image2D inputImage;
+layout(rgba32f, set = 0, binding = 1) uniform writeonly image2D outputImage;
+layout(rgba32f, set = 0, binding = 2) uniform readonly  image2D gNormalDepth;
+layout(rgba32f, set = 0, binding = 3) uniform readonly  image2D gAlbedo;
+
+layout(push_constant) uniform PushConstants {
+    int stepSize;
+    float phiColor;
+    float phiNormal;
+    float phiDepth;
+    int isFinalPass;
+} pc;
+
+const float KERNEL[5] = float[](1.0 / 16.0, 1.0 / 4.0, 3.0 / 8.0, 1.0 / 4.0, 1.0 / 16.0);
+
+float luminance(vec3 c) {
+    return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size  = imageSize(outputImage);
+
+    if (pixel.x >= size.x || pixel.y >= size.y) return;
+
+    vec4 centerIllum = imageLoad(inputImage, pixel);
+    vec4 centerND    = imageLoad(gNormalDepth, pixel);
+
+    vec3  centerNormal = centerND.rgb;
+    float centerDepth  = centerND.a;
+
+    if (centerDepth >= 1e20) {
+        imageStore(outputImage, pixel, centerIllum);
+        return;
+    }
+
+    float centerLuma = luminance(centerIllum.rgb);
+
+    vec3 sumColor  = vec3(0.0);
+    float sumWeight = 0.0;
+
+    for (int y = -2; y <= 2; ++y) {
+        for (int x = -2; x <= 2; ++x) {
+            ivec2 neighborCoord = clamp(pixel + ivec2(x, y) * pc.stepSize, ivec2(0), size - 1);
+
+            vec4 sampleIllum = imageLoad(inputImage, neighborCoord);
+            vec4 sampleND    = imageLoad(gNormalDepth, neighborCoord);
+
+            vec3  sampleNormal = sampleND.rgb;
+            float sampleDepth  = sampleND.a;
+
+            if (sampleDepth >= 1e20) continue;
+
+            float kw = KERNEL[x + 2] * KERNEL[y + 2];
+
+            float depthDiff = abs(centerDepth - sampleDepth) / max(centerDepth, 0.001);
+            float wDepth = exp(-depthDiff / pc.phiDepth);
+
+            float wNormal = pow(max(0.0, dot(centerNormal, sampleNormal)), pc.phiNormal);
+
+            float lumaDiff = abs(centerLuma - luminance(sampleIllum.rgb));
+            float wLuma = exp(-lumaDiff / pc.phiColor);
+
+            float w = kw * wDepth * wNormal * wLuma;
+
+            sumColor  += sampleIllum.rgb * w;
+            sumWeight += w;
+        }
+    }
+
+    vec3 finalIllum = sumWeight > 1e-5 ? (sumColor / sumWeight) : centerIllum.rgb;
+
+    if (pc.isFinalPass == 1) {
+        vec3 albedo = imageLoad(gAlbedo, pixel).rgb;
+        finalIllum *= albedo;
+    }
+
+    imageStore(outputImage, pixel, vec4(finalIllum, centerDepth));
+}
