@@ -1,6 +1,7 @@
 #include "PathTracer.h"
 #include <fstream>
 #include <iostream>
+#include <glm/gtc/matrix_transform.hpp>
 
 static std::vector<char> readFile(const std::string& filename) {
     std::ifstream file(filename, std::ios::ate | std::ios::binary);
@@ -23,14 +24,18 @@ void PathTracer::initVulkan() {
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
     createStorageImage();
+    createPingPongImage();
+    createGBuffers();
     createPreviousImage();
     transitionImageLayoutImmediate(previousImage, 
         VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 
-   // loadMesh("../assets/bunny.obj");
     createCameraBuffer();
     createComputeDescriptors();
     createComputePipeline();
+
+    createAtrousDescriptors();
+    createAtrousPipeline();
 
     initOIDN();
     createOIDNBuffers();
@@ -52,7 +57,6 @@ void PathTracer::initOIDN() {
 }
 
 void PathTracer::createOIDNBuffers() {
-
     VkDeviceSize bufferSize = swapChainExtent.width * swapChainExtent.height * 4 * sizeof(float);
 
     auto createStaging = [&](VkBuffer& buffer, VkDeviceMemory& memory, VkBufferUsageFlags usage) {
@@ -239,6 +243,81 @@ void PathTracer::createStorageImage() {
     vkCreateImageView(device, &viewInfo, nullptr, &storageImageView);
 }
 
+void PathTracer::createPingPongImage() {
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType     = VK_IMAGE_TYPE_2D;
+    imageInfo.format        = VK_FORMAT_R32G32B32A32_SFLOAT;
+    imageInfo.extent        = {swapChainExtent.width, swapChainExtent.height, 1};
+    imageInfo.mipLevels     = 1;
+    imageInfo.arrayLayers   = 1;
+    imageInfo.samples       = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.tiling        = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.usage         = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    vkCreateImage(device, &imageInfo, nullptr, &pingPongImage);
+
+    VkMemoryRequirements memReq;
+    vkGetImageMemoryRequirements(device, pingPongImage, &memReq);
+
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize  = memReq.size;
+    allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+    vkAllocateMemory(device, &allocInfo, nullptr, &pingPongImageMemory);
+    vkBindImageMemory(device, pingPongImage, pingPongImageMemory, 0);
+
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image            = pingPongImage;
+    viewInfo.viewType         = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format           = VK_FORMAT_R32G32B32A32_SFLOAT;
+    viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+    vkCreateImageView(device, &viewInfo, nullptr, &pingPongImageView);
+
+    transitionImageLayoutImmediate(pingPongImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+}
+
+void PathTracer::createGBuffers() {
+    auto createImageHelper = [&](VkImage& img, VkDeviceMemory& mem, VkImageView& view) {
+        VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        info.imageType     = VK_IMAGE_TYPE_2D;
+        info.format        = VK_FORMAT_R32G32B32A32_SFLOAT;
+        info.extent        = {swapChainExtent.width, swapChainExtent.height, 1};
+        info.mipLevels     = 1;
+        info.arrayLayers   = 1;
+        info.samples       = VK_SAMPLE_COUNT_1_BIT;
+        info.tiling        = VK_IMAGE_TILING_OPTIMAL;
+        info.usage         = VK_IMAGE_USAGE_STORAGE_BIT;
+        info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        vkCreateImage(device, &info, nullptr, &img);
+
+        VkMemoryRequirements req;
+        vkGetImageMemoryRequirements(device, img, &req);
+
+        VkMemoryAllocateInfo allocInfo{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        allocInfo.allocationSize  = req.size;
+        allocInfo.memoryTypeIndex = findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        vkAllocateMemory(device, &allocInfo, nullptr, &mem);
+        vkBindImageMemory(device, img, mem, 0);
+
+        VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        viewInfo.image            = img;
+        viewInfo.viewType         = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format           = VK_FORMAT_R32G32B32A32_SFLOAT;
+        viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCreateImageView(device, &viewInfo, nullptr, &view);
+
+        transitionImageLayoutImmediate(img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+    };
+
+    createImageHelper(normalDepthImage, normalDepthImageMemory, normalDepthImageView);
+    createImageHelper(albedoImage, albedoImageMemory, albedoImageView);
+}
+
 void PathTracer::createCameraBuffer() {
     VkDeviceSize bufferSize = sizeof(CameraUBO);
 
@@ -267,7 +346,7 @@ void PathTracer::createCameraBuffer() {
 void PathTracer::createDescriptorPool() {
     VkDescriptorPoolSize poolSizes[5]{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    poolSizes[0].descriptorCount = 1;
+    poolSizes[0].descriptorCount = 3;
 
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     poolSizes[1].descriptorCount = 1;
@@ -298,7 +377,7 @@ void PathTracer::createDescriptorPool() {
 }
 
 void PathTracer::createDescriptorSetLayout() {
-    VkDescriptorSetLayoutBinding bindings[5]{};
+    VkDescriptorSetLayoutBinding bindings[7]{};
     bindings[0].binding         = 0;
     bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     bindings[0].descriptorCount = 1;
@@ -324,9 +403,19 @@ void PathTracer::createDescriptorSetLayout() {
     bindings[4].descriptorCount = 1;
     bindings[4].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
 
+    bindings[5].binding         = 5;
+    bindings[5].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[5].descriptorCount = 1;
+    bindings[5].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    bindings[6].binding         = 6;
+    bindings[6].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[6].descriptorCount = 1;
+    bindings[6].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 5;
+    layoutInfo.bindingCount = 7;
     layoutInfo.pBindings    = bindings;
     vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &computeDescriptorSetLayout);
 }
@@ -355,7 +444,15 @@ void PathTracer::createWrites() {
     prevImageInfo.imageView   = previousImageView;
     prevImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-    const int num_writes = 5;
+    VkDescriptorImageInfo normalDepthImgInfo{};
+    normalDepthImgInfo.imageView   = normalDepthImageView;
+    normalDepthImgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    VkDescriptorImageInfo albedoImgInfo{};
+    albedoImgInfo.imageView   = albedoImageView;
+    albedoImgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    const int num_writes = 7;
     VkWriteDescriptorSet writes[num_writes]{};
     writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[0].dstSet          = computeDescriptorSet;
@@ -392,7 +489,182 @@ void PathTracer::createWrites() {
     writes[4].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     writes[4].pImageInfo      = &prevImageInfo;
 
+    writes[5].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[5].dstSet          = computeDescriptorSet;
+    writes[5].dstBinding      = 5;
+    writes[5].descriptorCount = 1;
+    writes[5].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    writes[5].pImageInfo      = &normalDepthImgInfo;
+
+    writes[6].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[6].dstSet          = computeDescriptorSet;
+    writes[6].dstBinding      = 6;
+    writes[6].descriptorCount = 1;
+    writes[6].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    writes[6].pImageInfo      = &albedoImgInfo;
+
     vkUpdateDescriptorSets(device, num_writes, writes, 0, nullptr);
+}
+
+void PathTracer::createAtrousDescriptors() {
+    VkDescriptorSetLayoutBinding bindings[4]{};
+    bindings[0].binding         = 0;
+    bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    bindings[1].binding         = 1;
+    bindings[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    bindings[2].binding         = 2;
+    bindings[2].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    bindings[3].binding         = 3;
+    bindings[3].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[3].descriptorCount = 1;
+    bindings[3].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 4;
+    layoutInfo.pBindings    = bindings;
+    vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &atrousDescriptorSetLayout);
+
+    VkDescriptorPoolSize poolSizes[1]{};
+    poolSizes[0].type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    poolSizes[0].descriptorCount = 8;
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes    = poolSizes;
+    poolInfo.maxSets       = 2;
+    vkCreateDescriptorPool(device, &poolInfo, nullptr, &atrousDescriptorPool);
+
+    std::vector<VkDescriptorSetLayout> layouts = {atrousDescriptorSetLayout, atrousDescriptorSetLayout};
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool     = atrousDescriptorPool;
+    allocInfo.descriptorSetCount = 2;
+    allocInfo.pSetLayouts        = layouts.data();
+
+    VkDescriptorSet sets[2];
+    vkAllocateDescriptorSets(device, &allocInfo, sets);
+    atrousDescriptorSetPing = sets[0];
+    atrousDescriptorSetPong = sets[1];
+
+    VkDescriptorImageInfo storageImgInfo{};
+    storageImgInfo.imageView   = storageImageView;
+    storageImgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    VkDescriptorImageInfo pingPongImgInfo{};
+    pingPongImgInfo.imageView   = pingPongImageView;
+    pingPongImgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    VkDescriptorImageInfo normalDepthImgInfo{};
+    normalDepthImgInfo.imageView   = normalDepthImageView;
+    normalDepthImgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    VkDescriptorImageInfo albedoImgInfo{};
+    albedoImgInfo.imageView   = albedoImageView;
+    albedoImgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    VkWriteDescriptorSet writesPing[4]{};
+    writesPing[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writesPing[0].dstSet          = atrousDescriptorSetPing;
+    writesPing[0].dstBinding      = 0;
+    writesPing[0].descriptorCount = 1;
+    writesPing[0].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    writesPing[0].pImageInfo      = &storageImgInfo;
+
+    writesPing[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writesPing[1].dstSet          = atrousDescriptorSetPing;
+    writesPing[1].dstBinding      = 1;
+    writesPing[1].descriptorCount = 1;
+    writesPing[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    writesPing[1].pImageInfo      = &pingPongImgInfo;
+
+    writesPing[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writesPing[2].dstSet          = atrousDescriptorSetPing;
+    writesPing[2].dstBinding      = 2;
+    writesPing[2].descriptorCount = 1;
+    writesPing[2].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    writesPing[2].pImageInfo      = &normalDepthImgInfo;
+
+    writesPing[3].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writesPing[3].dstSet          = atrousDescriptorSetPing;
+    writesPing[3].dstBinding      = 3;
+    writesPing[3].descriptorCount = 1;
+    writesPing[3].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    writesPing[3].pImageInfo      = &albedoImgInfo;
+
+    vkUpdateDescriptorSets(device, 4, writesPing, 0, nullptr);
+
+    VkWriteDescriptorSet writesPong[4]{};
+    writesPong[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writesPong[0].dstSet          = atrousDescriptorSetPong;
+    writesPong[0].dstBinding      = 0;
+    writesPong[0].descriptorCount = 1;
+    writesPong[0].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    writesPong[0].pImageInfo      = &pingPongImgInfo;
+
+    writesPong[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writesPong[1].dstSet          = atrousDescriptorSetPong;
+    writesPong[1].dstBinding      = 1;
+    writesPong[1].descriptorCount = 1;
+    writesPong[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    writesPong[1].pImageInfo      = &storageImgInfo;
+
+    writesPong[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writesPong[2].dstSet          = atrousDescriptorSetPong;
+    writesPong[2].dstBinding      = 2;
+    writesPong[2].descriptorCount = 1;
+    writesPong[2].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    writesPong[2].pImageInfo      = &normalDepthImgInfo;
+
+    writesPong[3].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writesPong[3].dstSet          = atrousDescriptorSetPong;
+    writesPong[3].dstBinding      = 3;
+    writesPong[3].descriptorCount = 1;
+    writesPong[3].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    writesPong[3].pImageInfo      = &albedoImgInfo;
+
+    vkUpdateDescriptorSets(device, 4, writesPong, 0, nullptr);
+}
+
+void PathTracer::createAtrousPipeline() {
+    atrousPushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    atrousPushConstantRange.offset     = 0;
+    atrousPushConstantRange.size       = sizeof(AtrousPushConstants);
+
+    VkPipelineLayoutCreateInfo plInfo{};
+    plInfo.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plInfo.setLayoutCount         = 1;
+    plInfo.pSetLayouts            = &atrousDescriptorSetLayout;
+    plInfo.pushConstantRangeCount = 1;
+    plInfo.pPushConstantRanges    = &atrousPushConstantRange;
+    vkCreatePipelineLayout(device, &plInfo, nullptr, &atrousPipelineLayout);
+
+    auto compCode = readFile("shaders/atrous.spv");
+    VkShaderModule module = createShaderModule(compCode);
+
+    VkPipelineShaderStageCreateInfo sInfo{};
+    sInfo.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    sInfo.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+    sInfo.module = module;
+    sInfo.pName  = "main";
+
+    VkComputePipelineCreateInfo cpInfo{};
+    cpInfo.sType  = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    cpInfo.stage  = sInfo;
+    cpInfo.layout = atrousPipelineLayout;
+    vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &cpInfo, nullptr, &atrousPipeline);
+
+    vkDestroyShaderModule(device, module, nullptr);
 }
 
 void PathTracer::updateCameraBuffer() {
@@ -420,47 +692,50 @@ void PathTracer::createComputeDescriptors() {
 }
 
 void PathTracer::pushConstants() {
-    pc.jittering    = 0;
-    pc.frameCount   = 0;
-    pc.useNEE       = 1;
-    pc.useRealLens  = 0;
-    pc.useTAA       = 0;
-    pc.samples      = 2;
-    pc.focalLength  = 5.0f;
-    pc.apertureSize = 0.05f;
+    pc.jittering        = 0;
+    pc.frameCount       = 0;
+    pc.useNEE           = 1;
+    pc.useRealLens      = 0;
+    pc.useTAA           = 0;
+    pc.samples          = 2;
+    pc.focalLength      = 5.0f;
+    pc.apertureSize     = 0.05f;
+    pc.useAtrous        = 0;
+    pc.atrousIterations = 2;
 
     pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pushConstantRange.offset     = 0;
     pushConstantRange.size       = sizeof(PushConstants);
 }
 
-void PathTracer::createShaderInfo() {
+void PathTracer::createComputePipeline() {
+    pushConstants();
+
     auto compCode = readFile("shaders/comp.spv");
-    compModule = createShaderModule(compCode);
+    VkShaderModule compModule = createShaderModule(compCode);
 
-    stageInfo.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stageInfo.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
-    stageInfo.module = compModule;
-    stageInfo.pName  = "main";
+    VkPipelineShaderStageCreateInfo sInfo{};
+    sInfo.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    sInfo.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+    sInfo.module = compModule;
+    sInfo.pName  = "main";
+
+    VkPipelineLayoutCreateInfo lInfo{};
+    lInfo.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    lInfo.setLayoutCount         = 1;
+    lInfo.pSetLayouts            = &computeDescriptorSetLayout;
+    lInfo.pushConstantRangeCount = 1;
+    lInfo.pPushConstantRanges    = &pushConstantRange;
+    vkCreatePipelineLayout(device, &lInfo, nullptr, &computePipelineLayout);
+
+    VkComputePipelineCreateInfo pInfo{};
+    pInfo.sType  = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pInfo.stage  = sInfo;
+    pInfo.layout = computePipelineLayout;
+    vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pInfo, nullptr, &computePipeline);
+
+    vkDestroyShaderModule(device, compModule, nullptr);
 }
-
-void PathTracer::createLayoutInfo() {
-    layoutInfo.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount         = 1;
-    layoutInfo.pSetLayouts            = &computeDescriptorSetLayout;
-    layoutInfo.pushConstantRangeCount = 1;
-    layoutInfo.pPushConstantRanges    = &pushConstantRange;
-    vkCreatePipelineLayout(device, &layoutInfo, nullptr, &computePipelineLayout);
-}
-
-void PathTracer::createPipelineInfo() {
-    pipelineInfo.sType  = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    pipelineInfo.stage  = stageInfo;
-    pipelineInfo.layout = computePipelineLayout;
-    vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &computePipeline);
-}
-
-#include <glm/gtc/matrix_transform.hpp>
 
 void PathTracer::loadMesh(const std::string& filename) {
     MeshLoader baseLoader;
@@ -660,14 +935,6 @@ void PathTracer::createBVHBuffer(const std::vector<BVHNode>& nodes) {
     vkFreeMemory(device, stagingMemory, nullptr);
 }
 
-void PathTracer::createComputePipeline() {
-    pushConstants();
-    createShaderInfo();
-    createLayoutInfo();
-    createPipelineInfo();
-    vkDestroyShaderModule(device, compModule, nullptr);
-}
-
 void PathTracer::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
     pc.frameCount++;
 
@@ -716,6 +983,63 @@ void PathTracer::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t ima
         VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
 
+    transitionImageLayout(commandBuffer, storageImage,
+        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT);
+
+    VkImage blitSourceImage = storageImage;
+
+    if (pc.useAtrous == 1) {
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, atrousPipeline);
+
+        bool ping = true;
+        for (int i = 0; i < pc.atrousIterations; ++i) {
+            VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            vkCmdPipelineBarrier(commandBuffer,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                0, 1, &barrier, 0, nullptr, 0, nullptr);
+
+            VkDescriptorSet currentSet = ping ? atrousDescriptorSetPing : atrousDescriptorSetPong;
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
+                atrousPipelineLayout, 0, 1, &currentSet, 0, nullptr);
+
+            AtrousPushConstants apc;
+            apc.stepSize    = 1 << i;
+            apc.phiColor    = 0.08f;
+            apc.phiNormal   = 64.0f;
+            apc.phiDepth    = 0.02f;
+            apc.isFinalPass = (i == pc.atrousIterations - 1) ? 1 : 0;
+
+            vkCmdPushConstants(commandBuffer, atrousPipelineLayout,
+                VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(apc), &apc);
+
+            vkCmdDispatch(commandBuffer,
+                (swapChainExtent.width  + 7) / 8,
+                (swapChainExtent.height + 7) / 8, 1);
+
+            ping = !ping;
+        }
+
+        blitSourceImage = ping ? storageImage : pingPongImage;
+
+        VkMemoryBarrier finalBarrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        finalBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        finalBarrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        vkCmdPipelineBarrier(commandBuffer,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0, 1, &finalBarrier, 0, nullptr, 0, nullptr);
+    }
+
+    transitionImageLayout(commandBuffer, blitSourceImage,
+        VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+
     transitionImageLayout(commandBuffer, swapChainImages[imageIndex],
         VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -727,11 +1051,11 @@ void PathTracer::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t ima
     blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     blit.dstOffsets[1]  = {(int32_t)swapChainExtent.width, (int32_t)swapChainExtent.height, 1};
     vkCmdBlitImage(commandBuffer,
-        storageImage,                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        blitSourceImage,             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         1, &blit, VK_FILTER_NEAREST);
 
-    transitionImageLayout(commandBuffer, storageImage,
+    transitionImageLayout(commandBuffer, blitSourceImage,
         VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
         VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT);
@@ -766,10 +1090,28 @@ void PathTracer::cleanup() {
     vkDestroyBuffer(device, cameraBuffer, nullptr);
     vkFreeMemory(device, cameraBufferMemory, nullptr);
 
+    vkDestroyPipeline(device, atrousPipeline, nullptr);
+    vkDestroyPipelineLayout(device, atrousPipelineLayout, nullptr);
+    vkDestroyDescriptorPool(device, atrousDescriptorPool, nullptr);
+    vkDestroyDescriptorSetLayout(device, atrousDescriptorSetLayout, nullptr);
+
     vkDestroyPipeline(device, computePipeline, nullptr);
     vkDestroyPipelineLayout(device, computePipelineLayout, nullptr);
     vkDestroyDescriptorPool(device, descriptorPool, nullptr);
     vkDestroyDescriptorSetLayout(device, computeDescriptorSetLayout, nullptr);
+
+    vkDestroyImageView(device, normalDepthImageView, nullptr);
+    vkDestroyImage(device, normalDepthImage, nullptr);
+    vkFreeMemory(device, normalDepthImageMemory, nullptr);
+
+    vkDestroyImageView(device, albedoImageView, nullptr);
+    vkDestroyImage(device, albedoImage, nullptr);
+    vkFreeMemory(device, albedoImageMemory, nullptr);
+
+    vkDestroyImageView(device, pingPongImageView, nullptr);
+    vkDestroyImage(device, pingPongImage, nullptr);
+    vkFreeMemory(device, pingPongImageMemory, nullptr);
+
     vkDestroyImageView(device, storageImageView, nullptr);
     vkDestroyImage(device, storageImage, nullptr);
     vkFreeMemory(device, storageImageMemory, nullptr);
@@ -916,6 +1258,20 @@ void PathTracer::drawFrame() {
     if (ImGui::Checkbox("TAA", &taa)) {
         pc.useTAA = taa ? 1 : 0;
         pc.frameCount = 0;
+    }
+
+    bool atrous = pc.useAtrous;
+    if (ImGui::Checkbox("Use A-trous Multi-Pass", &atrous)) {
+        pc.useAtrous = atrous ? 1 : 0;
+        pc.frameCount = 0;
+    }
+
+    if (pc.useAtrous) {
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(100.0f);
+        if (ImGui::SliderInt("Iterations", &pc.atrousIterations, 1, 5)) {
+            pc.frameCount = 0;
+        }
     }
 
     int samples = static_cast<int>(pc.samples);

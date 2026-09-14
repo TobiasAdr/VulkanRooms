@@ -39,7 +39,6 @@ target_include_directories(VulkanRooms PRIVATE
     ${glfw_SOURCE_DIR}/include
     external
 )
-
 # Shaders
 find_program(GLSLC glslc HINTS $ENV{VULKAN_SDK}/Bin)
 
@@ -52,9 +51,11 @@ add_custom_command(
         ${SPIRV_DIR}/vert.spv
         ${SPIRV_DIR}/frag.spv
         ${SPIRV_DIR}/comp.spv
+        ${SPIRV_DIR}/atrous.spv
     COMMAND ${GLSLC} ${SHADER_DIR}/shader.vert -o ${SPIRV_DIR}/vert.spv
     COMMAND ${GLSLC} ${SHADER_DIR}/shader.frag -o ${SPIRV_DIR}/frag.spv
     COMMAND ${GLSLC} ${SHADER_DIR}/pathtracer.comp -o ${SPIRV_DIR}/comp.spv
+    COMMAND ${GLSLC} ${SHADER_DIR}/atrous.comp -o ${SPIRV_DIR}/atrous.spv
     COMMAND ${GLSLC} ${SHADER_DIR}/gbuffer.vert -o ${SPIRV_DIR}/gvert.spv
     COMMAND ${GLSLC} ${SHADER_DIR}/gbuffer.vert -o ${SPIRV_DIR}/gfrag.spv
 
@@ -62,12 +63,14 @@ add_custom_command(
         ${SHADER_DIR}/shader.vert
         ${SHADER_DIR}/shader.frag
         ${SHADER_DIR}/pathtracer.comp
+        ${SHADER_DIR}/atrous.comp
 )
 
 add_custom_target(Shaders DEPENDS
     ${SPIRV_DIR}/vert.spv
     ${SPIRV_DIR}/frag.spv
     ${SPIRV_DIR}/comp.spv
+    ${SPIRV_DIR}/atrous.spv
 )
 
 add_dependencies(VulkanRooms Shaders)
