@@ -62,6 +62,8 @@ struct Light {
 const float CELL_SIZE = 4.0;
 const float ROOM_H = 2.4;
 const float WALL_THICKNESS = 0.32; 
+const float DOOR_W = 1.3;
+const float DOOR_H = 1.95;
 
 const int WALL_RIGHT = 1;
 const int WALL_LEFT = 2;
@@ -69,90 +71,40 @@ const int WALL_FAR = 4;
 const int WALL_NEAR = 8;
 const int ROOM_LIGHT = 16;
 const int PILLAR = 32;
+const int DOOR_X = 64;
+const int DOOR_Z = 128;
 
-const int MAP_W = 8;
-const int MAP_H = 8;
+const int MAP_W = 4;
+const int MAP_H = 4;
 
-const int levelMap[64] = int[](
-    WALL_NEAR | WALL_LEFT | WALL_RIGHT, 
-    WALL_NEAR | WALL_LEFT | WALL_RIGHT | ROOM_LIGHT, 
-    WALL_NEAR | WALL_LEFT, 
-    WALL_NEAR | ROOM_LIGHT, 
-    WALL_NEAR, 
-    WALL_NEAR | ROOM_LIGHT, 
-    WALL_NEAR | WALL_FAR, 
+const int levelMap[16] = int[](
+    WALL_NEAR | WALL_LEFT | ROOM_LIGHT,
+    WALL_NEAR | ROOM_LIGHT,
+    WALL_NEAR | ROOM_LIGHT,
     WALL_NEAR | WALL_RIGHT | ROOM_LIGHT,
 
-    WALL_LEFT | WALL_RIGHT, 
-    WALL_LEFT | WALL_RIGHT, 
-    0, 
-    PILLAR, 
-    0, 
-    WALL_RIGHT, 
-    WALL_LEFT | WALL_NEAR, 
+    WALL_LEFT | ROOM_LIGHT,
+    PILLAR,
+    ROOM_LIGHT,
     WALL_RIGHT | ROOM_LIGHT,
 
-    WALL_LEFT | WALL_RIGHT | ROOM_LIGHT, 
-    WALL_LEFT | WALL_RIGHT | ROOM_LIGHT, 
-    WALL_FAR, 
-    ROOM_LIGHT, 
-    PILLAR, 
-    ROOM_LIGHT, 
-    0, 
-    WALL_RIGHT,
-
-    WALL_LEFT | WALL_FAR, 
-    WALL_LEFT, 
-    WALL_NEAR | WALL_FAR, 
-    0, 
-    WALL_FAR, 
-    WALL_RIGHT, 
-    PILLAR | ROOM_LIGHT, 
-    WALL_RIGHT,
-    
-    WALL_LEFT | WALL_NEAR, 
-    WALL_LEFT | WALL_RIGHT | ROOM_LIGHT, 
-    WALL_FAR | WALL_NEAR, 
-    ROOM_LIGHT, 
-    WALL_NEAR | PILLAR, 
-    0, 
-    WALL_FAR, 
+    WALL_LEFT | ROOM_LIGHT,
+    ROOM_LIGHT,
+    PILLAR,
     WALL_RIGHT | ROOM_LIGHT,
-   
-    WALL_LEFT | WALL_RIGHT | ROOM_LIGHT, 
-    WALL_LEFT | WALL_RIGHT, 
-    0, 
-    WALL_RIGHT, 
-    WALL_LEFT | ROOM_LIGHT, 
-    PILLAR, 
-    WALL_NEAR, 
-    WALL_RIGHT,
-    
-    WALL_LEFT | WALL_RIGHT, 
-    WALL_LEFT | WALL_RIGHT | ROOM_LIGHT, 
-    WALL_FAR, 
-    ROOM_LIGHT, 
-    0, 
-    WALL_FAR, 
-    ROOM_LIGHT, 
-    WALL_RIGHT,
-   
-    WALL_FAR | WALL_LEFT | WALL_RIGHT, 
-    WALL_FAR | WALL_LEFT | WALL_RIGHT, 
-    WALL_FAR | WALL_NEAR, 
-    WALL_FAR | ROOM_LIGHT, 
-    WALL_FAR | PILLAR, 
-    WALL_FAR | WALL_NEAR, 
-    WALL_FAR, 
+
+    WALL_FAR | WALL_LEFT | ROOM_LIGHT,
+    WALL_FAR | ROOM_LIGHT,
+    WALL_FAR | ROOM_LIGHT,
     WALL_FAR | WALL_RIGHT | ROOM_LIGHT
 );
 
-const vec3 WALL_COLOR       = vec3(0.85, 0.70, 0.22);
-const vec3 FLOOR_COLOR      = vec3(0.52, 0.44, 0.18);
-const vec3 ROOF_COLOR       = vec3(0.82, 0.79, 0.55);
-const vec3 LIGHT_COLOR      = vec3(1.00, 0.98, 0.88);
-const vec3 LIGHT_RADIANCE   = vec3(28.0, 26.0, 18.0);
-const vec3 BACKGROUND_COLOR = vec3(0.12, 0.11, 0.04);
+const vec3 WALL_COLOR       = vec3(0.78, 0.74, 0.32);
+const vec3 FLOOR_COLOR      = vec3(0.66, 0.58, 0.28);
+const vec3 ROOF_COLOR       = vec3(0.68, 0.65, 0.42);
+const vec3 LIGHT_COLOR      = vec3(1.00, 0.99, 0.94);
+const vec3 LIGHT_RADIANCE   = vec3(26.0, 25.0, 21.0);
+const vec3 BACKGROUND_COLOR = vec3(0.08, 0.08, 0.03);
 
 const int MAX_BOUNCES = 2;
 const int MAX_LIGHTS = 64;
@@ -189,10 +141,8 @@ vec3 cosineSampleHemisphere(vec3 normal) {
 }
 
 void cellLightBounds(vec3 o, out vec3 lightMin, out vec3 lightMax) {
-    float marginX = (CELL_SIZE - 0.8) * 0.5;
-    float marginZ = (CELL_SIZE - 1.6) * 0.5;
-    lightMin = o + vec3(marginX, ROOM_H, marginZ);
-    lightMax = o + vec3(marginX + 0.8, ROOM_H, marginZ + 1.6);
+    lightMin = o + vec3(1.6, ROOM_H, 1.6);
+    lightMax = o + vec3(2.4, ROOM_H, 2.4);
 }
 
 bool intersectQuad(Ray ray, vec3 minP, vec3 maxP, vec3 normal, vec3 color, bool isLight, inout HitInfo hit) {
@@ -254,6 +204,28 @@ bool intersectBox(Ray ray, vec3 bMin, vec3 bMax, vec3 color, inout HitInfo hit) 
     return true;
 }
 
+bool intersectDoorWallX(Ray ray, vec3 o, float halfT, inout HitInfo hit) {
+    bool didHit = false;
+    float d0 = (CELL_SIZE - DOOR_W) * 0.5;
+    float d1 = d0 + DOOR_W;
+
+    didHit = intersectBox(ray, o, o + vec3(halfT, ROOM_H, d0), WALL_COLOR, hit) || didHit;
+    didHit = intersectBox(ray, o + vec3(0.0, 0.0, d1), o + vec3(halfT, ROOM_H, CELL_SIZE), WALL_COLOR, hit) || didHit;
+    didHit = intersectBox(ray, o + vec3(0.0, DOOR_H, d0), o + vec3(halfT, ROOM_H, d1), WALL_COLOR, hit) || didHit;
+    return didHit;
+}
+
+bool intersectDoorWallZ(Ray ray, vec3 o, float halfT, inout HitInfo hit) {
+    bool didHit = false;
+    float d0 = (CELL_SIZE - DOOR_W) * 0.5;
+    float d1 = d0 + DOOR_W;
+
+    didHit = intersectBox(ray, o, o + vec3(d0, ROOM_H, halfT), WALL_COLOR, hit) || didHit;
+    didHit = intersectBox(ray, o + vec3(d1, 0.0, 0.0), o + vec3(CELL_SIZE, ROOM_H, halfT), WALL_COLOR, hit) || didHit;
+    didHit = intersectBox(ray, o + vec3(d0, DOOR_H, 0.0), o + vec3(d1, ROOM_H, halfT), WALL_COLOR, hit) || didHit;
+    return didHit;
+}
+
 bool intersectCell(Ray ray, int col, int row, inout HitInfo hit) {
     if (col < 0 || col >= MAP_W || row < 0 || row >= MAP_H) return false;
 
@@ -267,6 +239,11 @@ bool intersectCell(Ray ray, int col, int row, inout HitInfo hit) {
     bool hasLeft  = (type & WALL_LEFT)  != 0 || (col > 0        && (levelMap[row * MAP_W + col - 1] & WALL_RIGHT) != 0);
     bool hasFar   = (type & WALL_FAR)   != 0 || (row + 1 < MAP_H && (levelMap[(row + 1) * MAP_W + col] & WALL_NEAR) != 0);
     bool hasNear  = (type & WALL_NEAR)  != 0 || (row > 0        && (levelMap[(row - 1) * MAP_W + col] & WALL_FAR) != 0);
+
+    bool doorLeft  = (type & DOOR_X) != 0 || (col > 0 && (levelMap[row * MAP_W + col - 1] & DOOR_X) != 0);
+    bool doorRight = (type & DOOR_X) != 0 || (col + 1 < MAP_W && (levelMap[row * MAP_W + col + 1] & DOOR_X) != 0);
+    bool doorNear  = (type & DOOR_Z) != 0 || (row > 0 && (levelMap[(row - 1) * MAP_W + col] & DOOR_Z) != 0);
+    bool doorFar   = (type & DOOR_Z) != 0 || (row + 1 < MAP_H && (levelMap[(row + 1) * MAP_W + col] & DOOR_Z) != 0);
 
     bool didHit = false;
 
@@ -288,24 +265,30 @@ bool intersectCell(Ray ray, int col, int row, inout HitInfo hit) {
     float halfT = WALL_THICKNESS * 0.5;
 
     if (hasLeft) {
-        didHit = intersectBox(ray, o, o + vec3(halfT, ROOM_H, CELL_SIZE), WALL_COLOR, hit) || didHit;
+        if (col > 0 && doorLeft) didHit = intersectDoorWallX(ray, o, halfT, hit) || didHit;
+        else didHit = intersectBox(ray, o, o + vec3(halfT, ROOM_H, CELL_SIZE), WALL_COLOR, hit) || didHit;
     }
 
     if (hasRight) {
-        didHit = intersectBox(ray, o + vec3(CELL_SIZE - halfT, 0.0, 0.0), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), WALL_COLOR, hit) || didHit;
+        vec3 rO = o + vec3(CELL_SIZE - halfT, 0.0, 0.0);
+        if (col < MAP_W - 1 && doorRight) didHit = intersectDoorWallX(ray, rO, halfT, hit) || didHit;
+        else didHit = intersectBox(ray, rO, rO + vec3(halfT, ROOM_H, CELL_SIZE), WALL_COLOR, hit) || didHit;
     }
 
     if (hasNear) {
-        didHit = intersectBox(ray, o, o + vec3(CELL_SIZE, ROOM_H, halfT), WALL_COLOR, hit) || didHit;
+        if (row > 0 && doorNear) didHit = intersectDoorWallZ(ray, o, halfT, hit) || didHit;
+        else didHit = intersectBox(ray, o, o + vec3(CELL_SIZE, ROOM_H, halfT), WALL_COLOR, hit) || didHit;
     }
 
     if (hasFar) {
-        didHit = intersectBox(ray, o + vec3(0.0, 0.0, CELL_SIZE - halfT), o + vec3(CELL_SIZE, ROOM_H, CELL_SIZE), WALL_COLOR, hit) || didHit;
+        vec3 fO = o + vec3(0.0, 0.0, CELL_SIZE - halfT);
+        if (row < MAP_H - 1 && doorFar) didHit = intersectDoorWallZ(ray, fO, halfT, hit) || didHit;
+        else didHit = intersectBox(ray, fO, fO + vec3(CELL_SIZE, ROOM_H, halfT), WALL_COLOR, hit) || didHit;
     }
 
     if (hasPillar) {
-        vec3 pMin = o + vec3(1.5, 0.0, 1.5);
-        vec3 pMax = o + vec3(2.5, ROOM_H, 2.5);
+        vec3 pMin = o + vec3(1.65, 0.0, 1.65);
+        vec3 pMax = o + vec3(2.35, ROOM_H, 2.35);
         didHit = intersectBox(ray, pMin, pMax, WALL_COLOR, hit) || didHit;
     }
 
@@ -462,37 +445,27 @@ void buildLightList() {
 }
 
 vec3 weatheredFloorColor(vec3 p, vec3 baseColor) {
-    float fiber = fract(sin(dot(floor(p.xz * 60.0), vec2(12.9898, 78.233))) * 43758.5453);
-    float stainNoise = fract(sin(dot(floor(p.xz * 0.7), vec2(43.12, 19.82))) * 12345.67);
-    float grime = fract(sin(dot(floor(p.xz * 2.2), vec2(91.7, 33.1))) * 54321.12);
-
-    vec3 dirtyBrown = vec3(0.38, 0.29, 0.12);
-    vec3 color = mix(baseColor, dirtyBrown, stainNoise * grime * 0.6);
-    return color * mix(0.92, 1.0, fiber);
+    float fiber = fract(sin(dot(floor(p.xz * 50.0), vec2(12.9898, 78.233))) * 43758.5453);
+    float variation = fract(sin(dot(floor(p.xz * 1.5), vec2(43.12, 19.82))) * 12345.67);
+    vec3 tone = mix(baseColor * 0.94, baseColor * 1.06, variation);
+    return tone * mix(0.96, 1.0, fiber);
 }
 
 vec3 weatheredWallColor(vec3 p, vec3 normal, vec3 baseColor) {
     float wallCoord = abs(normal.x) > 0.5 ? p.z : p.x;
-    float seam = smoothstep(0.0, 0.02, abs(fract(wallCoord) - 0.5));
-    float stripes = sin(wallCoord * 28.0) * 0.04 + 0.96;
-
-    float nicotineNoise = fract(sin(dot(floor(vec2(wallCoord * 2.5, p.y * 1.5)), vec2(17.3, 71.9))) * 23421.63);
-    vec3 nicotineYellow = vec3(0.82, 0.72, 0.22);
-    vec3 color = mix(baseColor, nicotineYellow, nicotineNoise * 0.25);
-
-    float baseboardDirt = smoothstep(0.0, 0.4, p.y);
-    return color * mix(0.72, 1.0, seam) * stripes * mix(0.65, 1.0, baseboardDirt);
+    float subtleNoise = fract(sin(dot(floor(vec2(wallCoord * 4.0, p.y * 3.0)), vec2(17.3, 71.9))) * 23421.63);
+    vec3 col = mix(baseColor * 0.95, baseColor * 1.03, subtleNoise);
+    float baseboard = smoothstep(0.0, 0.12, p.y);
+    return col * mix(0.82, 1.0, baseboard);
 }
 
 vec3 ceilingTileColor(vec3 p, vec3 baseColor) {
     vec2 tileUV = fract(p.xz / 0.8);
-    vec2 grid = smoothstep(0.0, 0.04, tileUV) * (1.0 - smoothstep(0.96, 1.0, tileUV));
+    vec2 grid = smoothstep(0.0, 0.03, tileUV) * (1.0 - smoothstep(0.97, 1.0, tileUV));
     float tBar = min(grid.x, grid.y);
-
-    float panelVariance = fract(sin(dot(floor(p.xz / 0.8), vec2(15.1, 37.7))) * 43758.54);
-    vec3 tile = baseColor * mix(0.94, 1.04, panelVariance);
-    vec3 gridMetal = baseColor * 0.45; 
-
+    float panelNoise = fract(sin(dot(floor(p.xz / 0.8), vec2(15.1, 37.7))) * 43758.54);
+    vec3 tile = baseColor * mix(0.96, 1.04, panelNoise);
+    vec3 gridMetal = baseColor * 0.65;
     return mix(gridMetal, tile, tBar);
 }
 
@@ -717,7 +690,6 @@ void accumulateTAA(ivec2 pixel, ivec2 size, vec3 col, HitInfo primaryHit, bool d
 }
 
 void main() {
-    
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
     ivec2 size = imageSize(outputImage);
 
@@ -754,13 +726,8 @@ void main() {
     }
 
     if (pc.useTAA == 1) {
-        
         accumulateTAA(pixel, size, col, primaryHit, didHit);
-
     } else {
-        
         accumulateAverage(pixel, col, depth);
-    
     }
-
 }

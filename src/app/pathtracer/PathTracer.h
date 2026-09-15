@@ -166,7 +166,7 @@ protected:
     void createPreviousImage();
     void transitionImageLayoutImmediate(VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout);
 
-    void loadMesh(const std::string& filename);
+    void loadMesh();
     void createTriangleBuffer(const std::vector<Triangle>& triangles);
     void createCameraBuffer();
     void createBVHBuffer(const std::vector<BVHNode>& nodes);    

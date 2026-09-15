@@ -31,6 +31,9 @@ void PathTracer::initVulkan() {
         VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 
     createCameraBuffer();
+
+  //  loadMesh();
+
     createComputeDescriptors();
     createComputePipeline();
 
@@ -737,7 +740,7 @@ void PathTracer::createComputePipeline() {
     vkDestroyShaderModule(device, compModule, nullptr);
 }
 
-void PathTracer::loadMesh(const std::string& filename) {
+void PathTracer::loadMesh() {
     MeshLoader baseLoader;
     baseLoader.load("../assets/chair.obj", glm::vec3(0.0f), 0.5f);
     const std::vector<Triangle>& baseChair = baseLoader.triangles;
@@ -764,7 +767,20 @@ void PathTracer::loadMesh(const std::string& filename) {
         }
     };
 
-    addChairTransformed(glm::vec3(-0.1f,  1.10f, 2.2f), glm::vec3(35.0f, -120.0f, 70.0f));
+    glm::vec3 center = glm::vec3(8.0f, 0.0f, 8.0f);
+
+    addChairTransformed(center + glm::vec3(-0.35f, 0.00f, -0.20f), glm::vec3(  0.0f,   20.0f,   0.0f));
+    addChairTransformed(center + glm::vec3( 0.40f, 0.00f,  0.15f), glm::vec3(  0.0f, -110.0f,   0.0f));
+    addChairTransformed(center + glm::vec3(-0.15f, 0.00f,  0.55f), glm::vec3(  0.0f,  165.0f,   0.0f));
+
+    addChairTransformed(center + glm::vec3( 0.70f, 0.35f, -0.40f), glm::vec3( 78.0f,   45.0f, -25.0f));
+    addChairTransformed(center + glm::vec3(-0.65f, 0.20f,  0.60f), glm::vec3( 15.0f, -140.0f,  85.0f));
+
+    addChairTransformed(center + glm::vec3(-0.05f, 0.72f, -0.10f), glm::vec3(-12.0f,   65.0f,   8.0f));
+    addChairTransformed(center + glm::vec3( 0.25f, 0.80f,  0.30f), glm::vec3( 35.0f, -170.0f, -30.0f));
+
+    addChairTransformed(center + glm::vec3( 0.05f, 1.28f,  0.10f), glm::vec3(170.0f,   35.0f,  15.0f));
+    addChairTransformed(center + glm::vec3(-0.25f, 1.15f,  0.45f), glm::vec3(-45.0f,  110.0f, -65.0f));
 
     BVH bvh;
     bvh.build(allTriangles);
