@@ -43,8 +43,13 @@ void main() {
     vec3 sumColor  = vec3(0.0);
     float sumWeight = 0.0;
 
-    for (int y = -2; y <= 2; ++y) {
-        for (int x = -2; x <= 2; ++x) {
+    int pixelsX = 2;
+    int pixelsY = 2;
+
+    for (int y = -pixelsY; y <= pixelsY; ++y) {
+        
+        for (int x = -pixelsX; x <= pixelsX; ++x) {
+
             ivec2 neighborCoord = clamp(pixel + ivec2(x, y) * pc.stepSize, ivec2(0), size - 1);
 
             vec4 sampleIllum = imageLoad(inputImage, neighborCoord);
