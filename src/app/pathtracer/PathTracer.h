@@ -10,7 +10,7 @@
 struct PushConstants {
     uint32_t jittering;
     uint32_t frameCount;
-    uint32_t useNEE;
+    uint32_t useMIS;
     uint32_t useRealLens;
     uint32_t useTAA;
     uint32_t samples;
@@ -18,6 +18,7 @@ struct PushConstants {
     float apertureSize;
     uint32_t useAtrous; 
     int32_t atrousIterations; 
+    uint32_t useGlossyTest;
 };
 
 struct AtrousPushConstants {

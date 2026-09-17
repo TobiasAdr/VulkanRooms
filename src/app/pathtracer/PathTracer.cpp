@@ -32,8 +32,6 @@ void PathTracer::initVulkan() {
 
     createCameraBuffer();
 
-  //  loadMesh();
-
     createComputeDescriptors();
     createComputePipeline();
 
@@ -467,22 +465,22 @@ void PathTracer::createWrites() {
     writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[1].dstSet          = computeDescriptorSet;
     writes[1].dstBinding      = 1;
-    writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     writes[1].descriptorCount = 1;
+    writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     writes[1].pBufferInfo     = &triBufferInfo;
 
     writes[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[2].dstSet          = computeDescriptorSet;
     writes[2].dstBinding      = 2;
-    writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     writes[2].descriptorCount = 1;
+    writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     writes[2].pBufferInfo     = &BVHNodeBufferInfo;
 
     writes[3].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[3].dstSet          = computeDescriptorSet;
     writes[3].dstBinding      = 3;
-    writes[3].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     writes[3].descriptorCount = 1;
+    writes[3].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     writes[3].pBufferInfo     = &cameraUBOInfo;
 
     writes[4].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -697,7 +695,7 @@ void PathTracer::createComputeDescriptors() {
 void PathTracer::pushConstants() {
     pc.jittering        = 0;
     pc.frameCount       = 0;
-    pc.useNEE           = 1;
+    pc.useMIS           = 1;
     pc.useRealLens      = 0;
     pc.useTAA           = 0;
     pc.samples          = 2;
@@ -705,6 +703,7 @@ void PathTracer::pushConstants() {
     pc.apertureSize     = 0.05f;
     pc.useAtrous        = 0;
     pc.atrousIterations = 2;
+    pc.useGlossyTest    = 0;
 
     pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pushConstantRange.offset     = 0;
@@ -1258,9 +1257,9 @@ void PathTracer::drawFrame() {
         pc.frameCount = 0;
     }
 
-    bool nee = pc.useNEE;
-    if (ImGui::Checkbox("NEE", &nee)) {
-        pc.useNEE = nee ? 1 : 0;
+    bool mis = pc.useMIS;
+    if (ImGui::Checkbox("MIS", &mis)) {
+        pc.useMIS = mis ? 1 : 0;
         pc.frameCount = 0;
     }
 
@@ -1279,6 +1278,12 @@ void PathTracer::drawFrame() {
     bool atrous = pc.useAtrous;
     if (ImGui::Checkbox("Use A-trous Multi-Pass", &atrous)) {
         pc.useAtrous = atrous ? 1 : 0;
+        pc.frameCount = 0;
+    }
+
+    bool glossy = pc.useGlossyTest;
+    if (ImGui::Checkbox("Glossy Test", &glossy)) {
+        pc.useGlossyTest = glossy ? 1 : 0;
         pc.frameCount = 0;
     }
 
