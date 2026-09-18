@@ -4,7 +4,6 @@
 #include "../scene/MeshLoader.h"
 #include "imgui_impl_vulkan.h"
 #include "imgui_impl_glfw.h"
-#include <OpenImageDenoise/oidn.hpp>
 #include <vector>
 
 struct PushConstants {
@@ -16,8 +15,8 @@ struct PushConstants {
     uint32_t samples;
     float focalLength;
     float apertureSize;
-    uint32_t useAtrous; 
-    int32_t atrousIterations; 
+    uint32_t useAtrous;
+    int32_t atrousIterations;
     uint32_t useGlossyTest;
 };
 
@@ -34,11 +33,17 @@ struct CameraUBO {
     glm::vec4 forward;
     glm::vec4 right;
     glm::vec4 up;
-    
+
     glm::vec4 prevPosition;
     glm::vec4 prevForward;
     glm::vec4 prevRight;
     glm::vec4 prevUp;
+};
+
+struct GpuLight {
+    glm::vec4 minP;
+    glm::vec4 maxP;
+    glm::vec4 radiance;
 };
 
 struct Camera {
@@ -87,7 +92,15 @@ protected:
     VkBuffer triangleBuffer = VK_NULL_HANDLE;
     VkDeviceMemory triangleBufferMemory = VK_NULL_HANDLE;
     uint32_t triangleCount = 0;
-    
+
+    VkBuffer lightBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory lightBufferMemory = VK_NULL_HANDLE;
+    void* lightMapped = nullptr;
+    uint32_t lightCount = 0;
+    uint32_t lastGlossyState = 0xFFFFFFFFu;
+    void createLightBuffer();
+    void updateLightBuffer();
+
     VkImage        storageImage       = VK_NULL_HANDLE;
     VkDeviceMemory storageImageMemory = VK_NULL_HANDLE;
     VkImageView    storageImageView   = VK_NULL_HANDLE;
@@ -130,23 +143,6 @@ protected:
     uint32_t frameCount = 0;
     PushConstants pc;
 
-    oidn::DeviceRef oidnDevice;
-    oidn::FilterRef oidnFilter;
-    bool useOIDN = false;
-
-    std::vector<float> oidnColor;
-    std::vector<float> oidnOutput;
-
-    VkBuffer readbackBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory readbackBufferMemory = VK_NULL_HANDLE;
-
-    VkBuffer uploadBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory uploadBufferMemory = VK_NULL_HANDLE;
-
-    void initOIDN();
-    void createOIDNBuffers();
-    void runOIDNDenoise();
-
     void initVulkan() override;
     void cleanup()    override;
 
@@ -156,21 +152,21 @@ protected:
     void createComputeDescriptors();
     void createDescriptorSetLayout();
     void createDescriptorPool();
-    void createWrites();    
-    
+    void createWrites();
+
     void createAtrousPipeline();
     void createAtrousDescriptors();
 
     void pushConstants();
     void createComputePipeline();
-    
+
     void createPreviousImage();
     void transitionImageLayoutImmediate(VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout);
 
     void loadMesh();
     void createTriangleBuffer(const std::vector<Triangle>& triangles);
     void createCameraBuffer();
-    void createBVHBuffer(const std::vector<BVHNode>& nodes);    
+    void createBVHBuffer(const std::vector<BVHNode>& nodes);
 
     void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) override;
     void drawFrame() override;

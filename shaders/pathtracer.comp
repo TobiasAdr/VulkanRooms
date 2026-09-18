@@ -7,6 +7,12 @@ struct BVHNode {
     int triangleStart, triangleCount;
 };
 
+struct GpuLight {
+    vec4 minP;
+    vec4 maxP;
+    vec4 radiance;
+};
+
 layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(rgba32f, set = 0, binding = 0) uniform image2D outputImage;
@@ -28,6 +34,11 @@ layout(binding = 3) uniform CameraUBO {
 layout(rgba32f, set = 0, binding = 4) uniform image2D previousFrameImage;
 layout(rgba32f, set = 0, binding = 5) uniform writeonly image2D gNormalDepth;
 layout(rgba32f, set = 0, binding = 6) uniform writeonly image2D gAlbedo;
+
+layout(binding = 7) readonly buffer LightBuffer {
+    int count;
+    GpuLight lights[];
+} lightBuffer;
 
 layout(push_constant) uniform PushConstants {
     uint jittering;
@@ -55,11 +66,6 @@ struct HitInfo {
     bool isLight;
     float roughness;
     bool isGlossy;
-};
-
-struct Light {
-    vec3 minP;
-    vec3 maxP;
 };
 
 const float CELL_SIZE = 4.0;
@@ -133,19 +139,19 @@ const vec3 BACKGROUND_COLOR = vec3(0.08, 0.08, 0.03);
 
 const vec3 GLOSSY_COLOR          = vec3(0.95, 0.95, 0.97);
 const float GLOSSY_ROUGHNESS     = 0.05;
-const vec3 SMALL_LIGHT_RADIANCE  = vec3(400.0, 380.0, 340.0);
-const vec3 SMALL_LIGHT_MIN       = vec3(11.85, ROOM_H - 0.001, 11.85);
-const vec3 SMALL_LIGHT_MAX       = vec3(12.15, ROOM_H - 0.001, 12.15);
+const vec3 SMALL_LIGHT_RADIANCE  = vec3(120.0, 114.0, 102.0);
+const vec3 SMALL_LIGHT_MIN       = vec3(11.85, ROOM_H , 11.85);
+const vec3 SMALL_LIGHT_MAX       = vec3(12.15, ROOM_H, 12.15);
 
-const int MAX_BOUNCES = 2;
+const int MAX_BOUNCES = 1;
 const int MAX_LIGHTS = 64;
 const float HISTORY_WEIGHT = 0.9;
+const float HISTORY_WEIGHT_NEW = 0.55;
 const float DEPTH_REJECT_TOL = 0.05;
 const float PI = 3.14159265;
 
-Light gLights[MAX_LIGHTS];
-vec3 gLightRadiance[MAX_LIGHTS];
-int gLightCount = 0;
+const float DIRECT_CLAMP = 20.0;
+const float ACCUM_CLAMP = 10.0;
 
 uint rngState;
 
@@ -225,11 +231,6 @@ vec3 glossyBrdf(vec3 normal, vec3 wo, vec3 wi, float roughness, vec3 specColor) 
     float NdotL = max(dot(normal, wi), 0.0);
     float denom = 4.0 * NdotV * NdotL;
     return specColor * (D * G) / max(denom, 1e-7);
-}
-
-void cellLightBounds(vec3 o, out vec3 lightMin, out vec3 lightMax) {
-    lightMin = o + vec3(1.6, ROOM_H, 1.6);
-    lightMax = o + vec3(2.4, ROOM_H, 2.4);
 }
 
 bool intersectQuad(Ray ray, vec3 minP, vec3 maxP, vec3 normal, vec3 color, bool isLight, inout HitInfo hit) {
@@ -373,8 +374,8 @@ bool intersectCell(Ray ray, int col, int row, inout HitInfo hit) {
     }
 
     if (hasLight) {
-        vec3 lMin, lMax;
-        cellLightBounds(o, lMin, lMax);
+        vec3 lMin = o + vec3(1.6, ROOM_H, 1.6);
+        vec3 lMax = o + vec3(2.4, ROOM_H, 2.4);
 
         didHit = intersectQuad(ray, lMin, lMax, vec3(0, -1, 0), LIGHT_COLOR, true, hit) || didHit;
         didHit = intersectQuad(ray, o + vec3(0, ROOM_H, 0), vec3(o.x + CELL_SIZE, ROOM_H, lMin.z), vec3(0, -1, 0), ROOF_COLOR, false, hit) || didHit;
@@ -476,113 +477,11 @@ bool traverseGrid(Ray ray, inout HitInfo hit) {
     return didHit;
 }
 
-bool hitTriangle(Ray ray, Triangle tri, inout HitInfo closest) {
-    vec3 v0 = tri.v0.xyz;
-    vec3 v1 = tri.v1.xyz;
-    vec3 v2 = tri.v2.xyz;
-
-    vec3 e1 = v1 - v0;
-    vec3 e2 = v2 - v0;
-    vec3 h = cross(ray.dir, e2);
-    float a = dot(e1, h);
-
-    if (abs(a) < 0.0001) return false;
-
-    float f = 1.0 / a;
-    vec3 s = ray.origin - v0;
-    float u = f * dot(s, h);
-    if (u < 0.0 || u > 1.0) return false;
-
-    vec3 q = cross(s, e1);
-    float v = f * dot(ray.dir, q);
-    if (v < 0.0 || u + v > 1.0) return false;
-
-    float t = f * dot(e2, q);
-    if (t < 0.001 || t >= closest.t) return false;
-
-    closest.t = t;
-    closest.normal = tri.normal.xyz;
-    closest.color = vec3(0.45, 0.27, 0.12);
-    closest.isLight = false;
-    closest.isGlossy = false;
-    closest.roughness = 1.0;
-    return true;
-}
-
-bool hitAABB(Ray ray, vec3 aabbMin, vec3 aabbMax, float tMax) {
-    vec3 safeDir = mix(sign(ray.dir) * 1e-5, ray.dir, greaterThan(abs(ray.dir), vec3(1e-5)));
-    vec3 invDir = 1.0 / safeDir;
-    vec3 t0 = (aabbMin - ray.origin) * invDir;
-    vec3 t1 = (aabbMax - ray.origin) * invDir;
-    vec3 tMin = min(t0, t1);
-    vec3 tMax3 = max(t0, t1);
-
-    float tEnter = max(max(tMin.x, tMin.y), tMin.z);
-    float tExit  = min(min(tMax3.x, tMax3.y), tMax3.z);
-
-    return tEnter <= tExit && tExit > 0.001 && tEnter < tMax;
-}
-
-bool hitBVH(Ray ray, inout HitInfo hit) {
-    if (bvhBuffer.nodes.length() == 0) return false;
-
-    bool didHit = false;
-    int stack[32];
-    int stackPtr = 0;
-    stack[stackPtr++] = 0;
-
-    while (stackPtr > 0) {
-        int nodeIdx = stack[--stackPtr];
-        BVHNode node = bvhBuffer.nodes[nodeIdx];
-
-        if (!hitAABB(ray, node.aabbMin, node.aabbMax, hit.t)) continue;
-
-        if (node.triangleCount > 0) {
-            for (int i = node.triangleStart; i < node.triangleStart + node.triangleCount; i++) {
-                didHit = hitTriangle(ray, triBuffer.triangles[i], hit) || didHit;
-            }
-        } else {
-            stack[stackPtr++] = node.leftChild;
-            stack[stackPtr++] = node.rightChild;
-        }
-    }
-
-    return didHit;
-}
-
 bool intersectScene(Ray ray, inout HitInfo hit) {
     hit.t = 1e30;
     bool hitGrid = traverseGrid(ray, hit);
-    bool hitMeshes = hitBVH(ray, hit);
     bool hitSmall = (pc.useGlossyTest == 1) && intersectSmallLight(ray, hit);
-    return hitGrid || hitMeshes || hitSmall;
-}
-
-void buildLightList() {
-    gLightCount = 0;
-
-    for (int row = 0; row < MAP_H; row++) {
-        for (int col = 0; col < MAP_W; col++) {
-            if ((levelMap[row * MAP_W + col] & ROOM_LIGHT) == 0) continue;
-            if (gLightCount >= MAX_LIGHTS) continue;
-
-            vec3 o = vec3(float(col), 0.0, float(row)) * CELL_SIZE;
-            Light light;
-            cellLightBounds(o, light.minP, light.maxP);
-            gLights[gLightCount] = light;
-            gLightRadiance[gLightCount] = LIGHT_RADIANCE;
-            gLightCount++;
-        }
-    }
-
-    if (pc.useGlossyTest == 1 && gLightCount < MAX_LIGHTS) {
-        Light small;
-        small.minP = SMALL_LIGHT_MIN;
-        small.maxP = SMALL_LIGHT_MAX;
-        gLights[gLightCount] = small;
-        gLightRadiance[gLightCount] = SMALL_LIGHT_RADIANCE;
-        gLightCount++;
-    }
+    return hitGrid || hitSmall;
 }
 
 vec3 weatheredFloorColor(vec3 p, vec3 baseColor) {
@@ -616,6 +515,7 @@ vec3 applySurfaceDetail(vec3 p, vec3 normal, vec3 baseColor) {
     if (abs(normal.y) < 0.2) return weatheredWallColor(p, normal, baseColor);
     return baseColor;
 }
+
 
 Ray generateCameraRay(ivec2 pixel, ivec2 size) {
     vec2 jitter = vec2(randomFloat() - 0.5, randomFloat() - 0.5);
@@ -658,10 +558,10 @@ float powerHeuristic(float pdfA, float pdfB) {
 }
 
 int findLightIndex(vec3 point) {
-    for (int i = 0; i < gLightCount; i++) {
-        if (point.x >= gLights[i].minP.x - 0.01 && point.x <= gLights[i].maxP.x + 0.01 &&
-            point.z >= gLights[i].minP.z - 0.01 && point.z <= gLights[i].maxP.z + 0.01 &&
-            abs(point.y - gLights[i].minP.y) < 0.05) {
+    for (int i = 0; i < lightBuffer.count; i++) {
+        if (point.x >= lightBuffer.lights[i].minP.x - 0.01 && point.x <= lightBuffer.lights[i].maxP.x + 0.01 &&
+            point.z >= lightBuffer.lights[i].minP.z - 0.01 && point.z <= lightBuffer.lights[i].maxP.z + 0.01 &&
+            abs(point.y - lightBuffer.lights[i].minP.y) < 0.05) {
             return i;
         }
     }
@@ -669,20 +569,22 @@ int findLightIndex(vec3 point) {
 }
 
 float lightSelectPdf(vec3 hitPoint, vec3 hitNormal, int chosenIdx) {
-    if (gLightCount == 0) return 0.0;
+    if (lightBuffer.count == 0) return 0.0;
 
     float weights[MAX_LIGHTS];
     float totalWeight = 0.0;
 
-    for (int i = 0; i < gLightCount; i++) {
-        vec3 center = 0.5 * (gLights[i].minP + gLights[i].maxP);
+    for (int i = 0; i < lightBuffer.count; i++) {
+        vec3 lmin = lightBuffer.lights[i].minP.xyz;
+        vec3 lmax = lightBuffer.lights[i].maxP.xyz;
+        vec3 center = 0.5 * (lmin + lmax);
         vec3 toCenter = center - hitPoint;
         float d2 = max(dot(toCenter, toCenter), 0.01);
 
         vec3 d = toCenter / sqrt(d2);
         float cosTheta = max(dot(hitNormal, d), 0.0);
         float cosLight = max(dot(vec3(0.0, -1.0, 0.0), -d), 0.0);
-        float area = (gLights[i].maxP.x - gLights[i].minP.x) * (gLights[i].maxP.z - gLights[i].minP.z);
+        float area = (lmax.x - lmin.x) * (lmax.z - lmin.z);
         float w = max((area * cosTheta * cosLight) / d2, 0.0001);
         weights[i] = w;
         totalWeight += w;
@@ -692,8 +594,9 @@ float lightSelectPdf(vec3 hitPoint, vec3 hitNormal, int chosenIdx) {
 }
 
 float lightPdf(vec3 hitPoint, vec3 hitNormal, int chosenIdx, vec3 dir, float dist) {
-    Light light = gLights[chosenIdx];
-    float area = (light.maxP.x - light.minP.x) * (light.maxP.z - light.minP.z);
+    vec3 lmin = lightBuffer.lights[chosenIdx].minP.xyz;
+    vec3 lmax = lightBuffer.lights[chosenIdx].maxP.xyz;
+    float area = (lmax.x - lmin.x) * (lmax.z - lmin.z);
     if (area <= 0.0) return 0.0;
 
     float cosLight = max(dot(vec3(0.0, -1.0, 0.0), -dir), 0.0);
@@ -705,13 +608,15 @@ float lightPdf(vec3 hitPoint, vec3 hitNormal, int chosenIdx, vec3 dir, float dis
 }
 
 vec3 sampleDirectLight(vec3 hitPoint, vec3 hitNormal, vec3 wo, HitInfo surf) {
-    if (gLightCount == 0) return vec3(0.0);
+    if (lightBuffer.count == 0) return vec3(0.0);
 
     float weights[MAX_LIGHTS];
     float totalWeight = 0.0;
 
-    for (int i = 0; i < gLightCount; i++) {
-        vec3 center = 0.5 * (gLights[i].minP + gLights[i].maxP);
+    for (int i = 0; i < lightBuffer.count; i++) {
+        vec3 lmin = lightBuffer.lights[i].minP.xyz;
+        vec3 lmax = lightBuffer.lights[i].maxP.xyz;
+        vec3 center = 0.5 * (lmin + lmax);
         vec3 toCenter = center - hitPoint;
         float d2 = max(dot(toCenter, toCenter), 0.01);
 
@@ -719,7 +624,7 @@ vec3 sampleDirectLight(vec3 hitPoint, vec3 hitNormal, vec3 wo, HitInfo surf) {
         float cosTheta = max(dot(hitNormal, dir), 0.0);
         float cosLight = max(dot(vec3(0.0, -1.0, 0.0), -dir), 0.0);
 
-        float area = (gLights[i].maxP.x - gLights[i].minP.x) * (gLights[i].maxP.z - gLights[i].minP.z);
+        float area = (lmax.x - lmin.x) * (lmax.z - lmin.z);
         float w = max((area * cosTheta * cosLight) / d2, 0.0001);
 
         weights[i] = w;
@@ -730,19 +635,20 @@ vec3 sampleDirectLight(vec3 hitPoint, vec3 hitNormal, vec3 wo, HitInfo surf) {
     float r = randomFloat() * totalWeight;
     float cumulative = 0.0;
     int chosenIdx = 0;
-    for (int i = 0; i < gLightCount; i++) {
+    for (int i = 0; i < lightBuffer.count; i++) {
         cumulative += weights[i];
-        if (r <= cumulative || i == gLightCount - 1) { chosenIdx = i; break; }
+        if (r <= cumulative || i == lightBuffer.count - 1) { chosenIdx = i; break; }
     }
 
-    Light light = gLights[chosenIdx];
-    vec3 lightRadiance = gLightRadiance[chosenIdx];
+    vec3 lmin = lightBuffer.lights[chosenIdx].minP.xyz;
+    vec3 lmax = lightBuffer.lights[chosenIdx].maxP.xyz;
+    vec3 lightRadiance = lightBuffer.lights[chosenIdx].radiance.xyz;
     float pSelect = weights[chosenIdx] / totalWeight;
 
     vec3 lightPoint = vec3(
-        mix(light.minP.x, light.maxP.x, randomFloat()),
-        light.minP.y,
-        mix(light.minP.z, light.maxP.z, randomFloat())
+        mix(lmin.x, lmax.x, randomFloat()),
+        lmin.y,
+        mix(lmin.z, lmax.z, randomFloat())
     );
 
     vec3 toLight = lightPoint - hitPoint;
@@ -760,7 +666,7 @@ vec3 sampleDirectLight(vec3 hitPoint, vec3 hitNormal, vec3 wo, HitInfo surf) {
     if (!intersectScene(shadowRay, shadowHit)) return vec3(0.0);
     if (!shadowHit.isLight || abs(shadowHit.t - dist) > 0.01) return vec3(0.0);
 
-    float lightArea = (light.maxP.x - light.minP.x) * (light.maxP.z - light.minP.z);
+    float lightArea = (lmax.x - lmin.x) * (lmax.z - lmin.z);
 
     float pAreaLight = pSelect * (1.0 / lightArea);
     float pdfLight = pAreaLight * distSqr / NdotLLight;
@@ -780,7 +686,8 @@ vec3 sampleDirectLight(vec3 hitPoint, vec3 hitNormal, vec3 wo, HitInfo surf) {
         misWeight = powerHeuristic(pdfLight, pdfBsdf);
     }
 
-    return misWeight * (lightRadiance * brdf * NdotL * NdotLLight * lightArea) / (distSqr * pSelect);
+    vec3 contribution = misWeight * (lightRadiance * brdf * NdotL * NdotLLight * lightArea) / (distSqr * pSelect);
+    return min(contribution, vec3(DIRECT_CLAMP));
 }
 
 vec3 tracePath(Ray ray) {
@@ -788,6 +695,7 @@ vec3 tracePath(Ray ray) {
     vec3 color = vec3(0.0);
 
     float prevBsdfPdf = -1.0;
+    vec3 prevNormal = vec3(0.0, 1.0, 0.0);
 
     for (int bounce = 0; bounce < MAX_BOUNCES; bounce++) {
         HitInfo hit;
@@ -797,19 +705,20 @@ vec3 tracePath(Ray ray) {
 
         if (hit.isLight) {
             int li = findLightIndex(hitPoint);
-            vec3 Le = (li >= 0) ? gLightRadiance[li] : LIGHT_RADIANCE;
+            vec3 Le = (li >= 0) ? lightBuffer.lights[li].radiance.xyz : LIGHT_RADIANCE;
 
             if (bounce == 0) {
                 color += throughput * Le;
             } else if (pc.useMIS == 1) {
                 float pdfLight = 0.0;
                 if (li >= 0) {
-                    pdfLight = lightPdf(ray.origin, vec3(0.0, 1.0, 0.0), li, ray.dir, hit.t);
+                    pdfLight = lightPdf(ray.origin, prevNormal, li, ray.dir, hit.t);
                 }
                 float misWeight = powerHeuristic(prevBsdfPdf, pdfLight);
-                color += throughput * Le * misWeight;
-            } 
-            
+                vec3 lightContribution = throughput * Le * misWeight;
+                color += min(lightContribution, vec3(DIRECT_CLAMP));
+            }
+
             break;
         }
 
@@ -819,7 +728,7 @@ vec3 tracePath(Ray ray) {
 
         HitInfo surf = hit;
         if (!hit.isGlossy) {
-            surf.color = applySurfaceDetail(shadingPoint, hitNormal, hit.color);
+            surf.color = hit.color;
         }
 
         vec3 direct = sampleDirectLight(shadingPoint, hitNormal, wo, surf);
@@ -846,6 +755,7 @@ vec3 tracePath(Ray ray) {
 
         ray.origin = shadingPoint + hitNormal * 0.001;
         ray.dir = wi;
+        prevNormal = hitNormal;
 
         float survivalProb = max(throughput.r, max(throughput.g, throughput.b));
         if (randomFloat() > survivalProb) break;
@@ -892,6 +802,7 @@ void accumulateAverage(ivec2 pixel, vec3 col, float depth) {
     vec3 oldColor = imageLoad(previousFrameImage, pixel).rgb;
     float weight = 1.0 / max(float(pc.frameCount), 1.0);
     vec3 accumulated = mix(oldColor, col, weight);
+    accumulated = min(accumulated, vec3(ACCUM_CLAMP));
     imageStore(outputImage, pixel, vec4(accumulated, depth));
 }
 
@@ -919,12 +830,15 @@ void accumulateTAA(ivec2 pixel, ivec2 size, vec3 col, HitInfo primaryHit, bool d
 
                 if (depthDiff < DEPTH_REJECT_TOL) {
                     historyWeight = HISTORY_WEIGHT;
+                } else {
+                    historyWeight = HISTORY_WEIGHT_NEW;
                 }
             }
         }
     }
 
     vec3 accumulated = mix(col, history.rgb, historyWeight);
+    accumulated = min(accumulated, vec3(ACCUM_CLAMP));
     imageStore(outputImage, pixel, vec4(accumulated, depth));
 }
 
@@ -936,8 +850,6 @@ void main() {
 
     rngState = uint(pixel.x) * 1973u + uint(pixel.y) * 9277u + pc.frameCount * 26699u + 1u;
 
-    buildLightList();
-
     vec2 centerUV = (vec2(pixel) + 0.5) / vec2(size) * 2.0 - 1.0;
     centerUV.x *= float(size.x) / float(size.y);
     centerUV.y = -centerUV.y;
@@ -945,16 +857,21 @@ void main() {
     HitInfo primaryHit;
     bool didHit = intersectScene(primaryRay, primaryHit);
 
-    vec3 hitPoint = primaryRay.origin + primaryHit.t * primaryRay.dir;
-    vec3 albedo = didHit ? (primaryHit.isLight ? LIGHT_COLOR : (primaryHit.isGlossy ? primaryHit.color : applySurfaceDetail(hitPoint, primaryHit.normal, primaryHit.color))) : BACKGROUND_COLOR;
-    float depth = didHit ? dot(hitPoint - camera.position.xyz, camera.forward.xyz) : 1e30;
+    bool needGBuffer = (pc.useTAA == 1) || (pc.useAtrous == 1);
 
-    imageStore(gNormalDepth, pixel, vec4(didHit ? primaryHit.normal : vec3(0.0, 1.0, 0.0), depth));
-    imageStore(gAlbedo, pixel, vec4(albedo, 1.0));
+    vec3 albedo = vec3(1.0);
+    float depth = 1e30;
+    if (needGBuffer || pc.useTAA == 1) {
+        vec3 hitPoint = primaryRay.origin + primaryHit.t * primaryRay.dir;
+        albedo = didHit ? (primaryHit.isLight ? LIGHT_COLOR : primaryHit.color) : BACKGROUND_COLOR;
+        depth = didHit ? dot(hitPoint - camera.position.xyz, camera.forward.xyz) : 1e30;
+        imageStore(gNormalDepth, pixel, vec4(didHit ? primaryHit.normal : vec3(0.0, 1.0, 0.0), depth));
+        imageStore(gAlbedo, pixel, vec4(albedo, 1.0));
+    }
 
     vec3 col = vec3(0.0);
 
-    for (int s = 0; s < pc.samples; s++) {
+    for (int s = 0; s < int(pc.samples); s++) {
         col += tracePath(generateCameraRay(pixel, size));
     }
 
