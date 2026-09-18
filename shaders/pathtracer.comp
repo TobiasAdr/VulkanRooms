@@ -52,6 +52,7 @@ layout(push_constant) uniform PushConstants {
     uint useAtrous;
     int atrousIterations;
     uint useGlossyTest;
+    int maxBounces;
 } pc;
 
 struct Ray {
@@ -130,9 +131,9 @@ const int levelMap[36] = int[](
     WALL_FAR | WALL_RIGHT | WALL_NEAR
 );
 
-const vec3 WALL_COLOR       = vec3(0.78, 0.74, 0.32);
-const vec3 FLOOR_COLOR      = vec3(0.66, 0.58, 0.28);
-const vec3 ROOF_COLOR       = vec3(0.68, 0.65, 0.42);
+const vec3 WALL_COLOR  = vec3(0.78, 0.72, 0.38);
+const vec3 FLOOR_COLOR = vec3(0.58, 0.51, 0.27);
+const vec3 ROOF_COLOR  = vec3(0.70, 0.67, 0.48);
 const vec3 LIGHT_COLOR      = vec3(1.00, 0.99, 0.94);
 const vec3 LIGHT_RADIANCE   = vec3(26.0, 25.0, 21.0);
 const vec3 BACKGROUND_COLOR = vec3(0.08, 0.08, 0.03);
@@ -140,10 +141,9 @@ const vec3 BACKGROUND_COLOR = vec3(0.08, 0.08, 0.03);
 const vec3 GLOSSY_COLOR          = vec3(0.95, 0.95, 0.97);
 const float GLOSSY_ROUGHNESS     = 0.05;
 const vec3 SMALL_LIGHT_RADIANCE  = vec3(120.0, 114.0, 102.0);
-const vec3 SMALL_LIGHT_MIN       = vec3(11.85, ROOM_H , 11.85);
+const vec3 SMALL_LIGHT_MIN       = vec3(11.85, ROOM_H, 11.85);
 const vec3 SMALL_LIGHT_MAX       = vec3(12.15, ROOM_H, 12.15);
 
-const int MAX_BOUNCES = 1;
 const int MAX_LIGHTS = 64;
 const float HISTORY_WEIGHT = 0.9;
 const float HISTORY_WEIGHT_NEW = 0.55;
@@ -516,7 +516,6 @@ vec3 applySurfaceDetail(vec3 p, vec3 normal, vec3 baseColor) {
     return baseColor;
 }
 
-
 Ray generateCameraRay(ivec2 pixel, ivec2 size) {
     vec2 jitter = vec2(randomFloat() - 0.5, randomFloat() - 0.5);
 
@@ -697,7 +696,7 @@ vec3 tracePath(Ray ray) {
     float prevBsdfPdf = -1.0;
     vec3 prevNormal = vec3(0.0, 1.0, 0.0);
 
-    for (int bounce = 0; bounce < MAX_BOUNCES; bounce++) {
+    for (int bounce = 0; bounce < pc.maxBounces; bounce++) {
         HitInfo hit;
         if (!intersectScene(ray, hit)) break;
 
