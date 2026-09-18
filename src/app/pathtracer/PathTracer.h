@@ -18,6 +18,7 @@ struct PushConstants {
     uint32_t useAtrous;
     int32_t atrousIterations;
     uint32_t useGlossyTest;
+    int32_t maxBounces;
 };
 
 struct AtrousPushConstants {

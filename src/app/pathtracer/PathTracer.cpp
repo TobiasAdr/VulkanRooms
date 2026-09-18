@@ -660,6 +660,7 @@ void PathTracer::pushConstants() {
     pc.useAtrous        = 0;
     pc.atrousIterations = 2;
     pc.useGlossyTest    = 0;
+    pc.maxBounces       = 2;
 
     pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pushConstantRange.offset     = 0;
@@ -1256,6 +1257,10 @@ void PathTracer::drawFrame() {
 
     if (ImGui::SliderFloat("Focal Length",  &pc.focalLength,  0.1f, 20.0f)) pc.frameCount = 0;
     if (ImGui::SliderFloat("Aperture Size", &pc.apertureSize, 0.0f, 0.5f))  pc.frameCount = 0;
+
+    if (ImGui::SliderInt("Max Bounces", &pc.maxBounces, 1, 10)) {
+        pc.frameCount = 0;
+    }
 
     ImGui::End();
     ImGui::Render();
