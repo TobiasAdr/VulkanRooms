@@ -90,7 +90,7 @@ void PathTracer::initVulkan() {
         VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 
     createCameraBuffer();
-    loadMesh();
+    //loadMesh();
     createLightBuffer();
 
     createComputeDescriptors();
@@ -651,7 +651,7 @@ void PathTracer::createComputeDescriptors() {
 void PathTracer::pushConstants() {
     pc.jittering        = 0;
     pc.frameCount       = 0;
-    pc.useMIS           = 1;
+    pc.lightMode        = 3;
     pc.useRealLens      = 0;
     pc.useTAA           = 0;
     pc.samples          = 1;
@@ -660,7 +660,8 @@ void PathTracer::pushConstants() {
     pc.useAtrous        = 0;
     pc.atrousIterations = 2;
     pc.useGlossyTest    = 0;
-    pc.maxBounces       = 2;
+    pc.maxBounces       = 4;
+    pc.useClamp         = 1;
 
     pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pushConstantRange.offset     = 0;
@@ -1205,39 +1206,39 @@ void PathTracer::drawFrame() {
     ImGui::Text("FPS: %.1f (%.2f ms/frame)", io.Framerate, 1000.0f / io.Framerate);
     ImGui::Separator();
 
-    bool jittering = pc.jittering;
+    bool jittering = pc.jittering != 0;
     if (ImGui::Checkbox("Jittering", &jittering)) {
         pc.jittering = jittering ? 1 : 0;
         pc.frameCount = 0;
     }
 
-    bool mis = pc.useMIS;
-    if (ImGui::Checkbox("MIS", &mis)) {
-        pc.useMIS = mis ? 1 : 0;
+    const char* lightModes[] = { "Direct light only", "BSDF only", "Both unweighted", "MIS" };
+    int currentMode = static_cast<int>(pc.lightMode);
+    if (ImGui::Combo("Light Mode", &currentMode, lightModes, 4)) {
+        pc.lightMode = static_cast<uint32_t>(currentMode);
         pc.frameCount = 0;
     }
 
-    bool realLens = pc.useRealLens;
-    if (ImGui::Checkbox("Real Lens", &realLens)) {
+    bool realLens = pc.useRealLens != 0;
+    if (ImGui::Checkbox("Thin Lens Depth of field", &realLens)) {
         pc.useRealLens = realLens ? 1 : 0;
         pc.frameCount = 0;
     }
+    
+    if (realLens) {
+        if (ImGui::SliderFloat("Focal Length",  &pc.focalLength,  0.1f, 20.0f)) pc.frameCount = 0;
+        if (ImGui::SliderFloat("Aperture Size", &pc.apertureSize, 0.0f, 0.5f))  pc.frameCount = 0;
+    }
 
-    bool taa = pc.useTAA;
-    if (ImGui::Checkbox("TAA", &taa)) {
+    bool taa = pc.useTAA != 0;
+    if (ImGui::Checkbox("Temporal Reprojection", &taa)) {
         pc.useTAA = taa ? 1 : 0;
         pc.frameCount = 0;
     }
 
-    bool atrous = pc.useAtrous;
+    bool atrous = pc.useAtrous != 0;
     if (ImGui::Checkbox("Use A-trous Multi-Pass", &atrous)) {
         pc.useAtrous = atrous ? 1 : 0;
-        pc.frameCount = 0;
-    }
-
-    bool glossy = pc.useGlossyTest;
-    if (ImGui::Checkbox("Glossy Test", &glossy)) {
-        pc.useGlossyTest = glossy ? 1 : 0;
         pc.frameCount = 0;
     }
 
@@ -1249,14 +1250,23 @@ void PathTracer::drawFrame() {
         }
     }
 
+    bool glossy = pc.useGlossyTest != 0;
+    if (ImGui::Checkbox("Glossy Test", &glossy)) {
+        pc.useGlossyTest = glossy ? 1 : 0;
+        pc.frameCount = 0;
+    }
+
+    bool clamp = pc.useClamp != 0;
+    if (ImGui::Checkbox("Use Clamping", &clamp)) {
+        pc.useClamp = clamp ? 1 : 0;
+        pc.frameCount = 0;
+    }
+
     int samples = static_cast<int>(pc.samples);
     if (ImGui::SliderInt("Samples", &samples, 1, 16)) {
         pc.samples = static_cast<uint32_t>(samples);
         pc.frameCount = 0;
     }
-
-    if (ImGui::SliderFloat("Focal Length",  &pc.focalLength,  0.1f, 20.0f)) pc.frameCount = 0;
-    if (ImGui::SliderFloat("Aperture Size", &pc.apertureSize, 0.0f, 0.5f))  pc.frameCount = 0;
 
     if (ImGui::SliderInt("Max Bounces", &pc.maxBounces, 1, 10)) {
         pc.frameCount = 0;
