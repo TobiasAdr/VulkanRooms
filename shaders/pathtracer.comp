@@ -43,7 +43,7 @@ layout(binding = 7) readonly buffer LightBuffer {
 layout(push_constant) uniform PushConstants {
     uint jittering;
     uint frameCount;
-    uint useMIS;
+    uint lightMode;
     uint useRealLens;
     uint useTAA;
     uint samples;
@@ -53,6 +53,7 @@ layout(push_constant) uniform PushConstants {
     int atrousIterations;
     uint useGlossyTest;
     int maxBounces;
+    uint useClamp;
 } pc;
 
 struct Ray {
@@ -477,9 +478,84 @@ bool traverseGrid(Ray ray, inout HitInfo hit) {
     return didHit;
 }
 
+bool hitTriangle(Ray ray, Triangle tri, inout HitInfo closest) {
+    vec3 v0 = tri.v0.xyz;
+    vec3 v1 = tri.v1.xyz;
+    vec3 v2 = tri.v2.xyz;
+
+    vec3 e1 = v1 - v0;
+    vec3 e2 = v2 - v0;
+    vec3 h = cross(ray.dir, e2);
+    float a = dot(e1, h);
+
+    if (abs(a) < 0.0001) return false;
+
+    float f = 1.0 / a;
+    vec3 s = ray.origin - v0;
+    float u = f * dot(s, h);
+    if (u < 0.0 || u > 1.0) return false;
+
+    vec3 q = cross(s, e1);
+    float v = f * dot(ray.dir, q);
+    if (v < 0.0 || u + v > 1.0) return false;
+
+    float t = f * dot(e2, q);
+    if (t < 0.001 || t >= closest.t) return false;
+
+    closest.t = t;
+    closest.normal = tri.normal.xyz;
+    closest.color = vec3(0.45, 0.27, 0.12);
+    closest.isLight = false;
+    closest.isGlossy = false;
+    closest.roughness = 1.0;
+    return true;
+}
+
+bool hitAABB(Ray ray, vec3 aabbMin, vec3 aabbMax, float tMax) {
+    vec3 safeDir = mix(sign(ray.dir) * 1e-5, ray.dir, greaterThan(abs(ray.dir), vec3(1e-5)));
+    vec3 invDir = 1.0 / safeDir;
+    vec3 t0 = (aabbMin - ray.origin) * invDir;
+    vec3 t1 = (aabbMax - ray.origin) * invDir;
+    vec3 tMin = min(t0, t1);
+    vec3 tMax3 = max(t0, t1);
+
+    float tEnter = max(max(tMin.x, tMin.y), tMin.z);
+    float tExit  = min(min(tMax3.x, tMax3.y), tMax3.z);
+
+    return tEnter <= tExit && tExit > 0.001 && tEnter < tMax;
+}
+
+bool hitBVH(Ray ray, inout HitInfo hit) {
+    if (bvhBuffer.nodes.length() == 0) return false;
+
+    bool didHit = false;
+    int stack[32];
+    int stackPtr = 0;
+    stack[stackPtr++] = 0;
+
+    while (stackPtr > 0) {
+        int nodeIdx = stack[--stackPtr];
+        BVHNode node = bvhBuffer.nodes[nodeIdx];
+
+        if (!hitAABB(ray, node.aabbMin, node.aabbMax, hit.t)) continue;
+
+        if (node.triangleCount > 0) {
+            for (int i = node.triangleStart; i < node.triangleStart + node.triangleCount; i++) {
+                didHit = hitTriangle(ray, triBuffer.triangles[i], hit) || didHit;
+            }
+        } else {
+            stack[stackPtr++] = node.leftChild;
+            stack[stackPtr++] = node.rightChild;
+        }
+    }
+
+    return didHit;
+}
+
 bool intersectScene(Ray ray, inout HitInfo hit) {
     hit.t = 1e30;
     bool hitGrid = traverseGrid(ray, hit);
+    //bool hitMeshes = hitBVH(ray, hit);
     bool hitSmall = (pc.useGlossyTest == 1) && intersectSmallLight(ray, hit);
     return hitGrid || hitSmall;
 }
@@ -608,6 +684,7 @@ float lightPdf(vec3 hitPoint, vec3 hitNormal, int chosenIdx, vec3 dir, float dis
 
 vec3 sampleDirectLight(vec3 hitPoint, vec3 hitNormal, vec3 wo, HitInfo surf) {
     if (lightBuffer.count == 0) return vec3(0.0);
+    if (pc.lightMode == 1) return vec3(0.0);
 
     float weights[MAX_LIGHTS];
     float totalWeight = 0.0;
@@ -681,12 +758,13 @@ vec3 sampleDirectLight(vec3 hitPoint, vec3 hitNormal, vec3 wo, HitInfo surf) {
     }
 
     float misWeight = 1.0;
-    if (pc.useMIS == 1) {
+    if (pc.lightMode == 3) {
         misWeight = powerHeuristic(pdfLight, pdfBsdf);
     }
 
     vec3 contribution = misWeight * (lightRadiance * brdf * NdotL * NdotLLight * lightArea) / (distSqr * pSelect);
-    return min(contribution, vec3(DIRECT_CLAMP));
+    if (pc.useClamp == 1) contribution = min(contribution, vec3(DIRECT_CLAMP));
+    return contribution;
 }
 
 vec3 tracePath(Ray ray) {
@@ -708,14 +786,19 @@ vec3 tracePath(Ray ray) {
 
             if (bounce == 0) {
                 color += throughput * Le;
-            } else if (pc.useMIS == 1) {
+            } else if (pc.lightMode == 1 || pc.lightMode == 2) {
+                vec3 lightContribution = throughput * Le;
+                if (pc.useClamp == 1) lightContribution = min(lightContribution, vec3(DIRECT_CLAMP));
+                color += lightContribution;
+            } else if (pc.lightMode == 3) {
                 float pdfLight = 0.0;
                 if (li >= 0) {
                     pdfLight = lightPdf(ray.origin, prevNormal, li, ray.dir, hit.t);
                 }
                 float misWeight = powerHeuristic(prevBsdfPdf, pdfLight);
                 vec3 lightContribution = throughput * Le * misWeight;
-                color += min(lightContribution, vec3(DIRECT_CLAMP));
+                if (pc.useClamp == 1) lightContribution = min(lightContribution, vec3(DIRECT_CLAMP));
+                color += lightContribution;
             }
 
             break;
@@ -727,7 +810,7 @@ vec3 tracePath(Ray ray) {
 
         HitInfo surf = hit;
         if (!hit.isGlossy) {
-            surf.color = hit.color;
+            surf.color = applySurfaceDetail(shadingPoint, hitNormal, hit.color);
         }
 
         vec3 direct = sampleDirectLight(shadingPoint, hitNormal, wo, surf);
@@ -756,7 +839,7 @@ vec3 tracePath(Ray ray) {
         ray.dir = wi;
         prevNormal = hitNormal;
 
-        float survivalProb = max(throughput.r, max(throughput.g, throughput.b));
+        float survivalProb = min(1.0, max(throughput.r, max(throughput.g, throughput.b)));
         if (randomFloat() > survivalProb) break;
         throughput /= survivalProb;
     }
@@ -801,7 +884,7 @@ void accumulateAverage(ivec2 pixel, vec3 col, float depth) {
     vec3 oldColor = imageLoad(previousFrameImage, pixel).rgb;
     float weight = 1.0 / max(float(pc.frameCount), 1.0);
     vec3 accumulated = mix(oldColor, col, weight);
-    accumulated = min(accumulated, vec3(ACCUM_CLAMP));
+    if (pc.useClamp == 1) accumulated = min(accumulated, vec3(ACCUM_CLAMP));
     imageStore(outputImage, pixel, vec4(accumulated, depth));
 }
 
@@ -837,7 +920,7 @@ void accumulateTAA(ivec2 pixel, ivec2 size, vec3 col, HitInfo primaryHit, bool d
     }
 
     vec3 accumulated = mix(col, history.rgb, historyWeight);
-    accumulated = min(accumulated, vec3(ACCUM_CLAMP));
+    if (pc.useClamp == 1) accumulated = min(accumulated, vec3(ACCUM_CLAMP));
     imageStore(outputImage, pixel, vec4(accumulated, depth));
 }
 
@@ -860,7 +943,7 @@ void main() {
 
     vec3 albedo = vec3(1.0);
     float depth = 1e30;
-    if (needGBuffer || pc.useTAA == 1) {
+    if (needGBuffer) {
         vec3 hitPoint = primaryRay.origin + primaryHit.t * primaryRay.dir;
         albedo = didHit ? (primaryHit.isLight ? LIGHT_COLOR : primaryHit.color) : BACKGROUND_COLOR;
         depth = didHit ? dot(hitPoint - camera.position.xyz, camera.forward.xyz) : 1e30;
