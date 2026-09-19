@@ -20,6 +20,9 @@ struct PushConstants {
     uint32_t useGlossyTest;
     int32_t maxBounces;
     uint32_t useClamp;
+    uint32_t useBVH;
+    uint32_t debugHeatmap;
+    float heatmapMax;
 };
 
 struct AtrousPushConstants {
@@ -143,6 +146,7 @@ protected:
     VkImageView previousImageView;
 
     uint32_t frameCount = 0;
+    uint64_t totalFrames = 0;
     PushConstants pc;
 
     void initVulkan() override;

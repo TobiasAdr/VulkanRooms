@@ -90,7 +90,7 @@ void PathTracer::initVulkan() {
         VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 
     createCameraBuffer();
-    //loadMesh();
+    loadMesh();
     createLightBuffer();
 
     createComputeDescriptors();
@@ -662,6 +662,9 @@ void PathTracer::pushConstants() {
     pc.useGlossyTest    = 0;
     pc.maxBounces       = 4;
     pc.useClamp         = 1;
+    pc.useBVH           = 1;
+    pc.debugHeatmap     = 0;
+    pc.heatmapMax       = 256.0f;
 
     pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pushConstantRange.offset     = 0;
@@ -699,7 +702,7 @@ void PathTracer::createComputePipeline() {
 
 void PathTracer::loadMesh() {
     MeshLoader baseLoader;
-    baseLoader.load("../assets/chair.obj", glm::vec3(0.0f), 0.5f);
+    baseLoader.load("../assets/drawer.obj", glm::vec3(0.0f), 0.7f);
     const std::vector<Triangle>& baseChair = baseLoader.triangles;
 
     std::vector<Triangle> allTriangles;
@@ -724,20 +727,7 @@ void PathTracer::loadMesh() {
         }
     };
 
-    glm::vec3 center = glm::vec3(8.0f, 0.0f, 8.0f);
-
-    addChairTransformed(center + glm::vec3(-0.35f, 0.00f, -0.20f), glm::vec3(  0.0f,   20.0f,   0.0f));
-    addChairTransformed(center + glm::vec3( 0.40f, 0.00f,  0.15f), glm::vec3(  0.0f, -110.0f,   0.0f));
-    addChairTransformed(center + glm::vec3(-0.15f, 0.00f,  0.55f), glm::vec3(  0.0f,  165.0f,   0.0f));
-
-    addChairTransformed(center + glm::vec3( 0.70f, 0.35f, -0.40f), glm::vec3( 78.0f,   45.0f, -25.0f));
-    addChairTransformed(center + glm::vec3(-0.65f, 0.20f,  0.60f), glm::vec3( 15.0f, -140.0f,  85.0f));
-
-    addChairTransformed(center + glm::vec3(-0.05f, 0.72f, -0.10f), glm::vec3(-12.0f,   65.0f,   8.0f));
-    addChairTransformed(center + glm::vec3( 0.25f, 0.80f,  0.30f), glm::vec3( 35.0f, -170.0f, -30.0f));
-
-    addChairTransformed(center + glm::vec3( 0.05f, 1.28f,  0.10f), glm::vec3(170.0f,   35.0f,  15.0f));
-    addChairTransformed(center + glm::vec3(-0.25f, 1.15f,  0.45f), glm::vec3(-45.0f,  110.0f, -65.0f));
+    addChairTransformed(glm::vec3(9.8f, 0.0f, 2.0f), glm::vec3(0.0f, -90.0f, 0.0f));
 
     BVH bvh;
     bvh.build(allTriangles);
@@ -963,7 +953,7 @@ void PathTracer::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t ima
 
     VkImage blitSourceImage = storageImage;
 
-    if (pc.useAtrous == 1) {
+    if (pc.useAtrous == 1 && pc.debugHeatmap == 0) {
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, atrousPipeline);
 
         bool ping = true;
@@ -1202,8 +1192,12 @@ void PathTracer::drawFrame() {
 
     ImGui::Begin("Settings");
 
+    totalFrames++;
+
     ImGuiIO& io = ImGui::GetIO();
     ImGui::Text("FPS: %.1f (%.2f ms/frame)", io.Framerate, 1000.0f / io.Framerate);
+    ImGui::Text("Total Frames: %llu", totalFrames);
+    ImGui::Text("Accumulated Frames: %u", pc.frameCount);
     ImGui::Separator();
 
     bool jittering = pc.jittering != 0;
@@ -1212,7 +1206,7 @@ void PathTracer::drawFrame() {
         pc.frameCount = 0;
     }
 
-    const char* lightModes[] = { "Direct light only", "BSDF only", "Both unweighted", "MIS" };
+    const char* lightModes[] = { "NEE only", "BSDF only", "Both unweighted", "MIS" };
     int currentMode = static_cast<int>(pc.lightMode);
     if (ImGui::Combo("Light Mode", &currentMode, lightModes, 4)) {
         pc.lightMode = static_cast<uint32_t>(currentMode);
@@ -1260,6 +1254,24 @@ void PathTracer::drawFrame() {
     if (ImGui::Checkbox("Use Clamping", &clamp)) {
         pc.useClamp = clamp ? 1 : 0;
         pc.frameCount = 0;
+    }
+
+    bool bvh = pc.useBVH != 0;
+    if (ImGui::Checkbox("Use BVH", &bvh)) {
+        pc.useBVH = bvh ? 1 : 0;
+        pc.frameCount = 0;
+    }
+
+    bool heatmap = pc.debugHeatmap != 0;
+    if (ImGui::Checkbox("Debug Heatmap", &heatmap)) {
+        pc.debugHeatmap = heatmap ? 1 : 0;
+        pc.frameCount = 0;
+    }
+
+    if (pc.debugHeatmap) {
+        if (ImGui::SliderFloat("Heatmap Max", &pc.heatmapMax, 16.0f, 6000.0f)) {
+            pc.frameCount = 0;
+        }
     }
 
     int samples = static_cast<int>(pc.samples);

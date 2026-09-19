@@ -54,6 +54,9 @@ layout(push_constant) uniform PushConstants {
     uint useGlossyTest;
     int maxBounces;
     uint useClamp;
+    uint useBVH;
+    uint debugHeatmap;
+    float heatmapMax;
 } pc;
 
 struct Ray {
@@ -262,6 +265,7 @@ bool intersectQuad(Ray ray, vec3 minP, vec3 maxP, vec3 normal, vec3 color, bool 
 }
 
 bool intersectGlossyQuad(Ray ray, vec3 minP, vec3 maxP, vec3 normal, vec3 color, inout HitInfo hit) {
+    
     float denom = dot(normal, ray.dir);
     if (abs(denom) < 0.0001) return false;
 
@@ -286,9 +290,11 @@ bool intersectGlossyQuad(Ray ray, vec3 minP, vec3 maxP, vec3 normal, vec3 color,
     hit.isGlossy = true;
     hit.roughness = GLOSSY_ROUGHNESS;
     return true;
+
 }
 
 bool intersectBox(Ray ray, vec3 bMin, vec3 bMax, vec3 color, inout HitInfo hit) {
+    
     vec3 safeDir = mix(sign(ray.dir) * 1e-5, ray.dir, greaterThan(abs(ray.dir), vec3(1e-5)));
     vec3 invDir = 1.0 / safeDir;
     vec3 t0 = (bMin - ray.origin) * invDir;
@@ -322,6 +328,7 @@ bool intersectBox(Ray ray, vec3 bMin, vec3 bMax, vec3 color, inout HitInfo hit) 
     hit.isGlossy = false;
     hit.roughness = 1.0;
     return true;
+
 }
 
 bool intersectDoorWallX(Ray ray, vec3 o, float halfT, inout HitInfo hit) {
@@ -425,6 +432,7 @@ bool intersectSmallLight(Ray ray, inout HitInfo hit) {
 }
 
 bool traverseGrid(Ray ray, inout HitInfo hit) {
+
     vec3 gridMin = vec3(0.0);
     vec3 gridMax = vec3(float(MAP_W) * CELL_SIZE, ROOM_H, float(MAP_H) * CELL_SIZE);
 
@@ -476,9 +484,11 @@ bool traverseGrid(Ray ray, inout HitInfo hit) {
     }
 
     return didHit;
+
 }
 
 bool hitTriangle(Ray ray, Triangle tri, inout HitInfo closest) {
+
     vec3 v0 = tri.v0.xyz;
     vec3 v1 = tri.v1.xyz;
     vec3 v2 = tri.v2.xyz;
@@ -509,9 +519,10 @@ bool hitTriangle(Ray ray, Triangle tri, inout HitInfo closest) {
     closest.isGlossy = false;
     closest.roughness = 1.0;
     return true;
+
 }
 
-bool hitAABB(Ray ray, vec3 aabbMin, vec3 aabbMax, float tMax) {
+bool hitAABBt(Ray ray, vec3 aabbMin, vec3 aabbMax, float tMax, out float tEnter) {
     vec3 safeDir = mix(sign(ray.dir) * 1e-5, ray.dir, greaterThan(abs(ray.dir), vec3(1e-5)));
     vec3 invDir = 1.0 / safeDir;
     vec3 t0 = (aabbMin - ray.origin) * invDir;
@@ -519,77 +530,154 @@ bool hitAABB(Ray ray, vec3 aabbMin, vec3 aabbMax, float tMax) {
     vec3 tMin = min(t0, t1);
     vec3 tMax3 = max(t0, t1);
 
-    float tEnter = max(max(tMin.x, tMin.y), tMin.z);
-    float tExit  = min(min(tMax3.x, tMax3.y), tMax3.z);
-
+    tEnter = max(max(tMin.x, tMin.y), tMin.z);
+    float tExit = min(min(tMax3.x, tMax3.y), tMax3.z);
     return tEnter <= tExit && tExit > 0.001 && tEnter < tMax;
 }
 
+bool hitLinear(Ray ray, inout HitInfo hit) {
+    if (bvhBuffer.nodes.length() > 0) {
+        float tEnter;
+        if (!hitAABBt(ray, bvhBuffer.nodes[0].aabbMin, bvhBuffer.nodes[0].aabbMax, hit.t, tEnter)) {
+            return false;
+        }
+    }
+    bool didHit = false;
+    int n = triBuffer.triangles.length();
+    for (int i = 0; i < n; i++) {
+        didHit = hitTriangle(ray, triBuffer.triangles[i], hit) || didHit;
+    }
+    return didHit;
+}
+
 bool hitBVH(Ray ray, inout HitInfo hit) {
-    if (bvhBuffer.nodes.length() == 0) return false;
+    int totalNodes = bvhBuffer.nodes.length();
+    if (totalNodes == 0) return false;
 
     bool didHit = false;
-    int stack[32];
+    int stack[64];
     int stackPtr = 0;
     stack[stackPtr++] = 0;
 
     while (stackPtr > 0) {
         int nodeIdx = stack[--stackPtr];
+        if (nodeIdx < 0 || nodeIdx >= totalNodes) continue;
         BVHNode node = bvhBuffer.nodes[nodeIdx];
 
-        if (!hitAABB(ray, node.aabbMin, node.aabbMax, hit.t)) continue;
+        float tEnter;
+        if (!hitAABBt(ray, node.aabbMin, node.aabbMax, hit.t, tEnter)) continue;
 
         if (node.triangleCount > 0) {
-            for (int i = node.triangleStart; i < node.triangleStart + node.triangleCount; i++) {
+            int triLimit = min(node.triangleStart + node.triangleCount, int(triBuffer.triangles.length()));
+            for (int i = node.triangleStart; i < triLimit; i++) {
                 didHit = hitTriangle(ray, triBuffer.triangles[i], hit) || didHit;
             }
         } else {
-            stack[stackPtr++] = node.leftChild;
-            stack[stackPtr++] = node.rightChild;
+            int l = node.leftChild;
+            int r = node.rightChild;
+
+            float tL, tR;
+            bool hitL = (l >= 0 && l < totalNodes) && hitAABBt(ray, bvhBuffer.nodes[l].aabbMin, bvhBuffer.nodes[l].aabbMax, hit.t, tL);
+            bool hitR = (r >= 0 && r < totalNodes) && hitAABBt(ray, bvhBuffer.nodes[r].aabbMin, bvhBuffer.nodes[r].aabbMax, hit.t, tR);
+
+            if (hitL && hitR) {
+                if (stackPtr < 62) {
+                    if (tL <= tR) { stack[stackPtr++] = r; stack[stackPtr++] = l; }
+                    else          { stack[stackPtr++] = l; stack[stackPtr++] = r; }
+                }
+            } else if (hitL) {
+                if (stackPtr < 63) stack[stackPtr++] = l;
+            } else if (hitR) {
+                if (stackPtr < 63) stack[stackPtr++] = r;
+            }
         }
     }
 
     return didHit;
 }
 
+int hitLinearTests(Ray ray, inout HitInfo hit) {
+    if (bvhBuffer.nodes.length() > 0) {
+        float tEnter;
+        if (!hitAABBt(ray, bvhBuffer.nodes[0].aabbMin, bvhBuffer.nodes[0].aabbMax, hit.t, tEnter)) {
+            return 0;
+        }
+    }
+    int tests = 0;
+    int n = triBuffer.triangles.length();
+    for (int i = 0; i < n; i++) {
+        hitTriangle(ray, triBuffer.triangles[i], hit);
+        tests++;
+    }
+    return tests;
+}
+
+int hitBVHTests(Ray ray, inout HitInfo hit) {
+
+    int totalNodes = bvhBuffer.nodes.length();
+    if (totalNodes == 0) return 0;
+
+    int tests = 0;
+    int stack[64];
+    int sp = 0;
+    stack[sp++] = 0;
+
+    while (sp > 0) {
+        int nodeIdx = stack[--sp];
+        if (nodeIdx < 0 || nodeIdx >= totalNodes) continue;
+        BVHNode node = bvhBuffer.nodes[nodeIdx];
+
+        float tEnter;
+        if (!hitAABBt(ray, node.aabbMin, node.aabbMax, hit.t, tEnter)) continue;
+
+        if (node.triangleCount > 0) {
+            int triLimit = min(node.triangleStart + node.triangleCount, int(triBuffer.triangles.length()));
+            for (int i = node.triangleStart; i < triLimit; i++) {
+                hitTriangle(ray, triBuffer.triangles[i], hit);
+                tests++;
+            }
+        } else {
+            int l = node.leftChild;
+            int r = node.rightChild;
+
+            float tL, tR;
+            bool hitL = (l >= 0 && l < totalNodes) && hitAABBt(ray, bvhBuffer.nodes[l].aabbMin, bvhBuffer.nodes[l].aabbMax, hit.t, tL);
+            bool hitR = (r >= 0 && r < totalNodes) && hitAABBt(ray, bvhBuffer.nodes[r].aabbMin, bvhBuffer.nodes[r].aabbMax, hit.t, tR);
+
+            if (hitL && hitR) {
+                if (sp < 62) {
+                    if (tL <= tR) { stack[sp++] = r; stack[sp++] = l; }
+                    else          { stack[sp++] = l; stack[sp++] = r; }
+                }
+            } else if (hitL) {
+                if (sp < 63) stack[sp++] = l;
+            } else if (hitR) {
+                if (sp < 63) stack[sp++] = r;
+            }
+        }
+    }
+
+    return tests;
+
+}
+
+vec3 heatmap(float t) {
+    t = clamp(t, 0.0, 1.0);
+    vec3 c = vec3(0.0);
+    c.b = smoothstep(0.5, 0.0, t);
+    c.g = t < 0.5 ? smoothstep(0.0, 0.5, t) : smoothstep(1.0, 0.5, t);
+    c.r = smoothstep(0.4, 1.0, t);
+    return c;
+}
+
 bool intersectScene(Ray ray, inout HitInfo hit) {
+
     hit.t = 1e30;
     bool hitGrid = traverseGrid(ray, hit);
-    //bool hitMeshes = hitBVH(ray, hit);
+    bool hitMeshes = (pc.useBVH == 1) ? hitBVH(ray, hit) : hitLinear(ray, hit);
     bool hitSmall = (pc.useGlossyTest == 1) && intersectSmallLight(ray, hit);
-    return hitGrid || hitSmall;
-}
+    return hitGrid || hitMeshes || hitSmall;
 
-vec3 weatheredFloorColor(vec3 p, vec3 baseColor) {
-    float fiber = fract(sin(dot(floor(p.xz * 50.0), vec2(12.9898, 78.233))) * 43758.5453);
-    float variation = fract(sin(dot(floor(p.xz * 1.5), vec2(43.12, 19.82))) * 12345.67);
-    vec3 tone = mix(baseColor * 0.94, baseColor * 1.06, variation);
-    return tone * mix(0.96, 1.0, fiber);
-}
-
-vec3 weatheredWallColor(vec3 p, vec3 normal, vec3 baseColor) {
-    float wallCoord = abs(normal.x) > 0.5 ? p.z : p.x;
-    float subtleNoise = fract(sin(dot(floor(vec2(wallCoord * 4.0, p.y * 3.0)), vec2(17.3, 71.9))) * 23421.63);
-    vec3 col = mix(baseColor * 0.95, baseColor * 1.03, subtleNoise);
-    float baseboard = smoothstep(0.0, 0.12, p.y);
-    return col * mix(0.82, 1.0, baseboard);
-}
-
-vec3 ceilingTileColor(vec3 p, vec3 baseColor) {
-    vec2 tileUV = fract(p.xz / 0.8);
-    vec2 grid = smoothstep(0.0, 0.03, tileUV) * (1.0 - smoothstep(0.97, 1.0, tileUV));
-    float tBar = min(grid.x, grid.y);
-    float panelNoise = fract(sin(dot(floor(p.xz / 0.8), vec2(15.1, 37.7))) * 43758.54);
-    vec3 tile = baseColor * mix(0.96, 1.04, panelNoise);
-    vec3 gridMetal = baseColor * 0.65;
-    return mix(gridMetal, tile, tBar);
-}
-
-vec3 applySurfaceDetail(vec3 p, vec3 normal, vec3 baseColor) {
-    if (normal.y > 0.8) return weatheredFloorColor(p, baseColor);
-    if (normal.y < -0.8) return ceilingTileColor(p, baseColor);
-    if (abs(normal.y) < 0.2) return weatheredWallColor(p, normal, baseColor);
-    return baseColor;
 }
 
 Ray generateCameraRay(ivec2 pixel, ivec2 size) {
@@ -810,7 +898,7 @@ vec3 tracePath(Ray ray) {
 
         HitInfo surf = hit;
         if (!hit.isGlossy) {
-            surf.color = applySurfaceDetail(shadingPoint, hitNormal, hit.color);
+            surf.color = hit.color;
         }
 
         vec3 direct = sampleDirectLight(shadingPoint, hitNormal, wo, surf);
@@ -936,6 +1024,15 @@ void main() {
     centerUV.x *= float(size.x) / float(size.y);
     centerUV.y = -centerUV.y;
     Ray primaryRay = Ray(camera.position.xyz, normalize(camera.forward.xyz + centerUV.x * camera.right.xyz + centerUV.y * camera.up.xyz));
+
+    if (pc.debugHeatmap == 1) {
+        HitInfo th;
+        th.t = 1e30;
+        int tests = (pc.useBVH == 1) ? hitBVHTests(primaryRay, th) : hitLinearTests(primaryRay, th);
+        imageStore(outputImage, pixel, vec4(heatmap(float(tests) / max(pc.heatmapMax, 1.0)), 1.0));
+        return;
+    }
+
     HitInfo primaryHit;
     bool didHit = intersectScene(primaryRay, primaryHit);
 
