@@ -1,5 +1,7 @@
 #version 450
 
+//==============================================================================
+
 struct Triangle { vec4 v0, v1, v2, normal; };
 struct BVHNode {
     vec3 aabbMin; int leftChild;
@@ -12,6 +14,8 @@ struct GpuLight {
     vec4 maxP;
     vec4 radiance;
 };
+
+//==============================================================================
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -59,6 +63,8 @@ layout(push_constant) uniform PushConstants {
     float heatmapMax;
 } pc;
 
+//==============================================================================
+
 struct Ray {
     vec3 origin;
     vec3 dir;
@@ -72,6 +78,8 @@ struct HitInfo {
     float roughness;
     bool isGlossy;
 };
+
+//==============================================================================
 
 const float CELL_SIZE = 4.0;
 const float ROOM_H = 2.4;
@@ -157,6 +165,8 @@ const float PI = 3.14159265;
 const float DIRECT_CLAMP = 20.0;
 const float ACCUM_CLAMP = 10.0;
 
+//==============================================================================
+
 uint rngState;
 
 uint pcgHash(uint v) {
@@ -169,6 +179,8 @@ float randomFloat() {
     rngState = pcgHash(rngState);
     return float(rngState) / float(0xFFFFFFFFu);
 }
+
+//==============================================================================
 
 void buildBasis(vec3 normal, out vec3 tangent, out vec3 bitangent) {
     vec3 up = abs(normal.y) < 0.9 ? vec3(0, 1, 0) : vec3(1, 0, 0);
@@ -199,6 +211,8 @@ vec3 sampleGGXHalfVector(vec3 normal, float roughness) {
     buildBasis(normal, tangent, bitangent);
     return normalize(tangent * local.x + bitangent * local.y + normal * local.z);
 }
+
+//==============================================================================
 
 float ggxD(vec3 normal, vec3 h, float roughness) {
     float a = roughness * roughness;
@@ -236,6 +250,8 @@ vec3 glossyBrdf(vec3 normal, vec3 wo, vec3 wi, float roughness, vec3 specColor) 
     float denom = 4.0 * NdotV * NdotL;
     return specColor * (D * G) / max(denom, 1e-7);
 }
+
+//==============================================================================
 
 bool intersectQuad(Ray ray, vec3 minP, vec3 maxP, vec3 normal, vec3 color, bool isLight, inout HitInfo hit) {
     float denom = dot(normal, ray.dir);
@@ -352,6 +368,8 @@ bool intersectDoorWallZ(Ray ray, vec3 o, float halfT, inout HitInfo hit) {
     didHit = intersectBox(ray, o + vec3(d0, DOOR_H, 0.0), o + vec3(d1, ROOM_H, halfT), WALL_COLOR, hit) || didHit;
     return didHit;
 }
+
+//==============================================================================
 
 bool intersectCell(Ray ray, int col, int row, inout HitInfo hit) {
     if (col < 0 || col >= MAP_W || row < 0 || row >= MAP_H) return false;
@@ -487,6 +505,8 @@ bool traverseGrid(Ray ray, inout HitInfo hit) {
 
 }
 
+//==============================================================================
+
 bool hitTriangle(Ray ray, Triangle tri, inout HitInfo closest) {
 
     vec3 v0 = tri.v0.xyz;
@@ -596,6 +616,8 @@ bool hitBVH(Ray ray, inout HitInfo hit) {
     return didHit;
 }
 
+//==============================================================================
+
 int hitLinearTests(Ray ray, inout HitInfo hit) {
     if (bvhBuffer.nodes.length() > 0) {
         float tEnter;
@@ -670,6 +692,8 @@ vec3 heatmap(float t) {
     return c;
 }
 
+//==============================================================================
+
 bool intersectScene(Ray ray, inout HitInfo hit) {
 
     hit.t = 1e30;
@@ -679,6 +703,8 @@ bool intersectScene(Ray ray, inout HitInfo hit) {
     return hitGrid || hitMeshes || hitSmall;
 
 }
+
+//==============================================================================
 
 Ray generateCameraRay(ivec2 pixel, ivec2 size) {
     vec2 jitter = vec2(randomFloat() - 0.5, randomFloat() - 0.5);
@@ -712,6 +738,8 @@ Ray generateCameraRay(ivec2 pixel, ivec2 size) {
 
     return ray;
 }
+
+//==============================================================================
 
 float powerHeuristic(float pdfA, float pdfB) {
     float a2 = pdfA * pdfA;
@@ -846,7 +874,9 @@ vec3 sampleDirectLight(vec3 hitPoint, vec3 hitNormal, vec3 wo, HitInfo surf) {
     }
 
     float misWeight = 1.0;
-    if (pc.lightMode == 3) {
+    if (pc.lightMode == 2) {
+        misWeight = 0.5;
+    } else if (pc.lightMode == 3) {
         misWeight = powerHeuristic(pdfLight, pdfBsdf);
     }
 
@@ -854,6 +884,8 @@ vec3 sampleDirectLight(vec3 hitPoint, vec3 hitNormal, vec3 wo, HitInfo surf) {
     if (pc.useClamp == 1) contribution = min(contribution, vec3(DIRECT_CLAMP));
     return contribution;
 }
+
+//==============================================================================
 
 vec3 tracePath(Ray ray) {
     vec3 throughput = vec3(1.0);
@@ -875,7 +907,8 @@ vec3 tracePath(Ray ray) {
             if (bounce == 0) {
                 color += throughput * Le;
             } else if (pc.lightMode == 1 || pc.lightMode == 2) {
-                vec3 lightContribution = throughput * Le;
+                float bsdfWeight = (pc.lightMode == 2) ? 0.5 : 1.0;
+                vec3 lightContribution = throughput * Le * bsdfWeight;
                 if (pc.useClamp == 1) lightContribution = min(lightContribution, vec3(DIRECT_CLAMP));
                 color += lightContribution;
             } else if (pc.lightMode == 3) {
@@ -934,6 +967,8 @@ vec3 tracePath(Ray ray) {
 
     return color;
 }
+
+//==============================================================================
 
 vec3 reprojectToPreviousPixel(vec3 worldPos, ivec2 size) {
     vec3 rel = worldPos - camera.prevPosition.xyz;
@@ -1011,6 +1046,8 @@ void accumulateTAA(ivec2 pixel, ivec2 size, vec3 col, HitInfo primaryHit, bool d
     if (pc.useClamp == 1) accumulated = min(accumulated, vec3(ACCUM_CLAMP));
     imageStore(outputImage, pixel, vec4(accumulated, depth));
 }
+
+//==============================================================================
 
 void main() {
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
