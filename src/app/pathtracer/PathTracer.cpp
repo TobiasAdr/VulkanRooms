@@ -665,6 +665,7 @@ void PathTracer::pushConstants() {
     pc.useBVH           = 1;
     pc.debugHeatmap     = 0;
     pc.heatmapMax       = 256.0f;
+    pc.useMeshes        = 1;
 
     pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pushConstantRange.offset     = 0;
@@ -702,7 +703,7 @@ void PathTracer::createComputePipeline() {
 
 void PathTracer::loadMesh() {
     MeshLoader baseLoader;
-    baseLoader.load("../assets/drawer.obj", glm::vec3(0.0f), 0.7f);
+    baseLoader.load("../assets/chair.obj", glm::vec3(0.0f), 0.7f);
     const std::vector<Triangle>& baseChair = baseLoader.triangles;
 
     std::vector<Triangle> allTriangles;
@@ -727,7 +728,25 @@ void PathTracer::loadMesh() {
         }
     };
 
-    addChairTransformed(glm::vec3(9.8f, 0.0f, 2.0f), glm::vec3(0.0f, -90.0f, 0.0f));
+    int numberOfChairs = 20;
+
+    glm::vec3 basePos(12.0f, 0.0f, 3.5f); 
+    
+    for (int i = 0; i < numberOfChairs; ++i) {
+        float xSpread = (static_cast<float>(std::rand()) / RAND_MAX - 0.5f) * 0.8f;
+        float zSpread = (static_cast<float>(std::rand()) / RAND_MAX - 0.5f) * 0.8f;
+        
+        float yOffset = (static_cast<float>(std::rand()) / RAND_MAX) * 0.5f; 
+        float yPos = (i * 0.2f) + yOffset;
+
+        glm::vec3 pos(basePos.x + xSpread, yPos, basePos.z + zSpread);
+
+        float randomRotY = static_cast<float>(std::rand() % 360);
+        float randomRotX = static_cast<float>(std::rand() % 360);
+        float randomRotZ = static_cast<float>(std::rand() % 360);
+
+        addChairTransformed(pos, glm::vec3(randomRotX, randomRotY, randomRotZ));
+    }
 
     BVH bvh;
     bvh.build(allTriangles);
@@ -1259,6 +1278,12 @@ void PathTracer::drawFrame() {
     bool bvh = pc.useBVH != 0;
     if (ImGui::Checkbox("Use BVH", &bvh)) {
         pc.useBVH = bvh ? 1 : 0;
+        pc.frameCount = 0;
+    }
+
+    bool meshes = pc.useMeshes != 0;
+    if (ImGui::Checkbox("Show Chairs (Meshes)", &meshes)) {
+        pc.useMeshes = meshes ? 1 : 0;
         pc.frameCount = 0;
     }
 

@@ -1,7 +1,5 @@
 #version 450
 
-//==============================================================================
-
 struct Triangle { vec4 v0, v1, v2, normal; };
 struct BVHNode {
     vec3 aabbMin; int leftChild;
@@ -14,8 +12,6 @@ struct GpuLight {
     vec4 maxP;
     vec4 radiance;
 };
-
-//==============================================================================
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -61,9 +57,8 @@ layout(push_constant) uniform PushConstants {
     uint useBVH;
     uint debugHeatmap;
     float heatmapMax;
+    uint useMeshes;
 } pc;
-
-//==============================================================================
 
 struct Ray {
     vec3 origin;
@@ -78,8 +73,6 @@ struct HitInfo {
     float roughness;
     bool isGlossy;
 };
-
-//==============================================================================
 
 const float CELL_SIZE = 4.0;
 const float ROOM_H = 2.4;
@@ -165,8 +158,6 @@ const float PI = 3.14159265;
 const float DIRECT_CLAMP = 20.0;
 const float ACCUM_CLAMP = 10.0;
 
-//==============================================================================
-
 uint rngState;
 
 uint pcgHash(uint v) {
@@ -179,8 +170,6 @@ float randomFloat() {
     rngState = pcgHash(rngState);
     return float(rngState) / float(0xFFFFFFFFu);
 }
-
-//==============================================================================
 
 void buildBasis(vec3 normal, out vec3 tangent, out vec3 bitangent) {
     vec3 up = abs(normal.y) < 0.9 ? vec3(0, 1, 0) : vec3(1, 0, 0);
@@ -211,8 +200,6 @@ vec3 sampleGGXHalfVector(vec3 normal, float roughness) {
     buildBasis(normal, tangent, bitangent);
     return normalize(tangent * local.x + bitangent * local.y + normal * local.z);
 }
-
-//==============================================================================
 
 float ggxD(vec3 normal, vec3 h, float roughness) {
     float a = roughness * roughness;
@@ -251,8 +238,6 @@ vec3 glossyBrdf(vec3 normal, vec3 wo, vec3 wi, float roughness, vec3 specColor) 
     return specColor * (D * G) / max(denom, 1e-7);
 }
 
-//==============================================================================
-
 bool intersectQuad(Ray ray, vec3 minP, vec3 maxP, vec3 normal, vec3 color, bool isLight, inout HitInfo hit) {
     float denom = dot(normal, ray.dir);
     if (abs(denom) < 0.0001) return false;
@@ -281,7 +266,6 @@ bool intersectQuad(Ray ray, vec3 minP, vec3 maxP, vec3 normal, vec3 color, bool 
 }
 
 bool intersectGlossyQuad(Ray ray, vec3 minP, vec3 maxP, vec3 normal, vec3 color, inout HitInfo hit) {
-    
     float denom = dot(normal, ray.dir);
     if (abs(denom) < 0.0001) return false;
 
@@ -306,11 +290,9 @@ bool intersectGlossyQuad(Ray ray, vec3 minP, vec3 maxP, vec3 normal, vec3 color,
     hit.isGlossy = true;
     hit.roughness = GLOSSY_ROUGHNESS;
     return true;
-
 }
 
 bool intersectBox(Ray ray, vec3 bMin, vec3 bMax, vec3 color, inout HitInfo hit) {
-    
     vec3 safeDir = mix(sign(ray.dir) * 1e-5, ray.dir, greaterThan(abs(ray.dir), vec3(1e-5)));
     vec3 invDir = 1.0 / safeDir;
     vec3 t0 = (bMin - ray.origin) * invDir;
@@ -344,7 +326,6 @@ bool intersectBox(Ray ray, vec3 bMin, vec3 bMax, vec3 color, inout HitInfo hit) 
     hit.isGlossy = false;
     hit.roughness = 1.0;
     return true;
-
 }
 
 bool intersectDoorWallX(Ray ray, vec3 o, float halfT, inout HitInfo hit) {
@@ -369,8 +350,6 @@ bool intersectDoorWallZ(Ray ray, vec3 o, float halfT, inout HitInfo hit) {
     return didHit;
 }
 
-//==============================================================================
-
 bool intersectCell(Ray ray, int col, int row, inout HitInfo hit) {
     if (col < 0 || col >= MAP_W || row < 0 || row >= MAP_H) return false;
 
@@ -393,6 +372,7 @@ bool intersectCell(Ray ray, int col, int row, inout HitInfo hit) {
     bool didHit = false;
 
     bool glossyFloor = (pc.useGlossyTest == 1) && (col == 2 || col == 3) && (row == 2 || row == 3);
+    
     if (glossyFloor) {
         didHit = intersectGlossyQuad(ray, o, o + vec3(CELL_SIZE, 0.0, CELL_SIZE), vec3(0, 1, 0), GLOSSY_COLOR, hit) || didHit;
     } else {
@@ -450,7 +430,6 @@ bool intersectSmallLight(Ray ray, inout HitInfo hit) {
 }
 
 bool traverseGrid(Ray ray, inout HitInfo hit) {
-
     vec3 gridMin = vec3(0.0);
     vec3 gridMax = vec3(float(MAP_W) * CELL_SIZE, ROOM_H, float(MAP_H) * CELL_SIZE);
 
@@ -502,13 +481,9 @@ bool traverseGrid(Ray ray, inout HitInfo hit) {
     }
 
     return didHit;
-
 }
 
-//==============================================================================
-
 bool hitTriangle(Ray ray, Triangle tri, inout HitInfo closest) {
-
     vec3 v0 = tri.v0.xyz;
     vec3 v1 = tri.v1.xyz;
     vec3 v2 = tri.v2.xyz;
@@ -539,7 +514,6 @@ bool hitTriangle(Ray ray, Triangle tri, inout HitInfo closest) {
     closest.isGlossy = false;
     closest.roughness = 1.0;
     return true;
-
 }
 
 bool hitAABBt(Ray ray, vec3 aabbMin, vec3 aabbMax, float tMax, out float tEnter) {
@@ -616,8 +590,6 @@ bool hitBVH(Ray ray, inout HitInfo hit) {
     return didHit;
 }
 
-//==============================================================================
-
 int hitLinearTests(Ray ray, inout HitInfo hit) {
     if (bvhBuffer.nodes.length() > 0) {
         float tEnter;
@@ -625,17 +597,19 @@ int hitLinearTests(Ray ray, inout HitInfo hit) {
             return 0;
         }
     }
+
     int tests = 0;
     int n = triBuffer.triangles.length();
+
     for (int i = 0; i < n; i++) {
         hitTriangle(ray, triBuffer.triangles[i], hit);
         tests++;
     }
+
     return tests;
 }
 
 int hitBVHTests(Ray ray, inout HitInfo hit) {
-
     int totalNodes = bvhBuffer.nodes.length();
     if (totalNodes == 0) return 0;
 
@@ -680,7 +654,6 @@ int hitBVHTests(Ray ray, inout HitInfo hit) {
     }
 
     return tests;
-
 }
 
 vec3 heatmap(float t) {
@@ -692,19 +665,13 @@ vec3 heatmap(float t) {
     return c;
 }
 
-//==============================================================================
-
 bool intersectScene(Ray ray, inout HitInfo hit) {
-
     hit.t = 1e30;
     bool hitGrid = traverseGrid(ray, hit);
-    bool hitMeshes = (pc.useBVH == 1) ? hitBVH(ray, hit) : hitLinear(ray, hit);
+    bool hitMeshes = (pc.useMeshes == 1) && ((pc.useBVH == 1) ? hitBVH(ray, hit) : hitLinear(ray, hit));
     bool hitSmall = (pc.useGlossyTest == 1) && intersectSmallLight(ray, hit);
-    return hitGrid || hitMeshes || hitSmall;
-
+    return hitGrid || hitSmall || hitMeshes;
 }
-
-//==============================================================================
 
 Ray generateCameraRay(ivec2 pixel, ivec2 size) {
     vec2 jitter = vec2(randomFloat() - 0.5, randomFloat() - 0.5);
@@ -738,8 +705,6 @@ Ray generateCameraRay(ivec2 pixel, ivec2 size) {
 
     return ray;
 }
-
-//==============================================================================
 
 float powerHeuristic(float pdfA, float pdfB) {
     float a2 = pdfA * pdfA;
@@ -780,6 +745,7 @@ float lightSelectPdf(vec3 hitPoint, vec3 hitNormal, int chosenIdx) {
         weights[i] = w;
         totalWeight += w;
     }
+    
     if (totalWeight <= 0.0) return 0.0;
     return weights[chosenIdx] / totalWeight;
 }
@@ -808,11 +774,12 @@ vec3 sampleDirectLight(vec3 hitPoint, vec3 hitNormal, vec3 wo, HitInfo surf) {
     for (int i = 0; i < lightBuffer.count; i++) {
         vec3 lmin = lightBuffer.lights[i].minP.xyz;
         vec3 lmax = lightBuffer.lights[i].maxP.xyz;
+
         vec3 center = 0.5 * (lmin + lmax);
         vec3 toCenter = center - hitPoint;
         float d2 = max(dot(toCenter, toCenter), 0.01);
-
         vec3 dir = toCenter / sqrt(d2);
+        
         float cosTheta = max(dot(hitNormal, dir), 0.0);
         float cosLight = max(dot(vec3(0.0, -1.0, 0.0), -dir), 0.0);
 
@@ -822,11 +789,13 @@ vec3 sampleDirectLight(vec3 hitPoint, vec3 hitNormal, vec3 wo, HitInfo surf) {
         weights[i] = w;
         totalWeight += w;
     }
+
     if (totalWeight <= 0.0) return vec3(0.0);
 
     float r = randomFloat() * totalWeight;
     float cumulative = 0.0;
     int chosenIdx = 0;
+
     for (int i = 0; i < lightBuffer.count; i++) {
         cumulative += weights[i];
         if (r <= cumulative || i == lightBuffer.count - 1) { chosenIdx = i; break; }
@@ -865,6 +834,7 @@ vec3 sampleDirectLight(vec3 hitPoint, vec3 hitNormal, vec3 wo, HitInfo surf) {
 
     vec3 brdf;
     float pdfBsdf;
+
     if (surf.isGlossy) {
         brdf = glossyBrdf(hitNormal, wo, wi, surf.roughness, surf.color);
         pdfBsdf = glossyPdf(hitNormal, wo, wi, surf.roughness);
@@ -881,11 +851,10 @@ vec3 sampleDirectLight(vec3 hitPoint, vec3 hitNormal, vec3 wo, HitInfo surf) {
     }
 
     vec3 contribution = misWeight * (lightRadiance * brdf * NdotL * NdotLLight * lightArea) / (distSqr * pSelect);
+
     if (pc.useClamp == 1) contribution = min(contribution, vec3(DIRECT_CLAMP));
     return contribution;
 }
-
-//==============================================================================
 
 vec3 tracePath(Ray ray) {
     vec3 throughput = vec3(1.0);
@@ -968,8 +937,6 @@ vec3 tracePath(Ray ray) {
     return color;
 }
 
-//==============================================================================
-
 vec3 reprojectToPreviousPixel(vec3 worldPos, ivec2 size) {
     vec3 rel = worldPos - camera.prevPosition.xyz;
     float t = dot(rel, camera.prevForward.xyz);
@@ -1018,6 +985,7 @@ void accumulateTAA(ivec2 pixel, ivec2 size, vec3 col, HitInfo primaryHit, bool d
 
     vec3 rayDir = normalize(camera.forward.xyz + centerUV.x * camera.right.xyz + centerUV.y * camera.up.xyz);
     vec3 worldPos = camera.position.xyz + primaryHit.t * rayDir;
+    
     float depth = didHit ? dot(worldPos - camera.position.xyz, camera.forward.xyz) : 1e30;
 
     float historyWeight = 0.0;
@@ -1047,8 +1015,6 @@ void accumulateTAA(ivec2 pixel, ivec2 size, vec3 col, HitInfo primaryHit, bool d
     imageStore(outputImage, pixel, vec4(accumulated, depth));
 }
 
-//==============================================================================
-
 void main() {
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
     ivec2 size = imageSize(outputImage);
@@ -1077,6 +1043,7 @@ void main() {
 
     vec3 albedo = vec3(1.0);
     float depth = 1e30;
+    
     if (needGBuffer) {
         vec3 hitPoint = primaryRay.origin + primaryHit.t * primaryRay.dir;
         albedo = didHit ? (primaryHit.isLight ? LIGHT_COLOR : primaryHit.color) : BACKGROUND_COLOR;
