@@ -23,6 +23,7 @@ struct PushConstants {
     uint32_t useBVH;
     uint32_t debugHeatmap;
     float heatmapMax;
+    uint32_t useMeshes;
 };
 
 struct AtrousPushConstants {

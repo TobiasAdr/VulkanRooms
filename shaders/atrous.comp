@@ -8,11 +8,13 @@ layout(rgba32f, set = 0, binding = 2) uniform readonly  image2D gNormalDepth;
 layout(rgba32f, set = 0, binding = 3) uniform readonly  image2D gAlbedo;
 
 layout(push_constant) uniform PushConstants {
+
     int stepSize;
     float phiColor;
     float phiNormal;
     float phiDepth;
     int isFinalPass;
+
 } pc;
 
 const float KERNEL[5] = float[](1.0 / 16.0, 1.0 / 4.0, 3.0 / 8.0, 1.0 / 4.0, 1.0 / 16.0);
@@ -22,6 +24,7 @@ float luminance(vec3 c) {
 }
 
 void main() {
+
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
     ivec2 size  = imageSize(outputImage);
 
@@ -34,8 +37,10 @@ void main() {
     float centerDepth  = centerND.a;
 
     if (centerDepth >= 1e20) {
+
         imageStore(outputImage, pixel, centerIllum);
         return;
+ 
     }
 
     float centerLuma = luminance(centerIllum.rgb);
@@ -74,15 +79,20 @@ void main() {
 
             sumColor  += sampleIllum.rgb * w;
             sumWeight += w;
+        
         }
+    
     }
 
     vec3 finalIllum = sumWeight > 1e-5 ? (sumColor / sumWeight) : centerIllum.rgb;
 
     if (pc.isFinalPass == 1) {
+
         vec3 albedo = imageLoad(gAlbedo, pixel).rgb;
         finalIllum *= albedo;
+    
     }
 
     imageStore(outputImage, pixel, vec4(finalIllum, centerDepth));
+    
 }
