@@ -13,12 +13,10 @@ glm::vec3 BVH::computeAABBMin(const std::vector<Triangle>& tris, int start, int 
 
     for(int i = start; i < start + count; i++){
 
-
         // Check all vertices, find the smallest find the smallest coordinates.  
         minP = glm::min(minP, glm::vec3(tris[i].v0));
         minP = glm::min(minP, glm::vec3(tris[i].v1));
         minP = glm::min(minP, glm::vec3(tris[i].v2));
-
 
     }
 
@@ -42,16 +40,13 @@ glm::vec3 BVH::computeAABBMax(const std::vector<Triangle>& tris, int start, int 
 
 }
 
-
 // ----------------------- CENTROID ---------------------
 
 // We compute the centroid to determine which group the triangle fit in when dividing the space. 
 
 glm::vec3 BVH::computeCentroid(const Triangle& tri){
 
-
     return (glm::vec3(tri.v0) + glm::vec3(tri.v1) + glm::vec3(tri.v2) ) / 3.0f;
-
 
 } 
 
@@ -66,7 +61,6 @@ int BVH::buildRecursive(std::vector<Triangle>& tris, int start, int count){
 
     node.aabbMin = computeAABBMin(tris, start, count);
     node.aabbMax = computeAABBMax(tris, start, count);
-
 
     // 4 or less triangles per leaf. 
     if(count <= 4){
