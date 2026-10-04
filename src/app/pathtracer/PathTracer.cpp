@@ -1237,7 +1237,7 @@ void PathTracer::drawFrame() {
         pc.useRealLens = realLens ? 1 : 0;
         pc.frameCount = 0;
     }
-    
+
     if (realLens) {
         if (ImGui::SliderFloat("Focal Length",  &pc.focalLength,  0.1f, 20.0f)) pc.frameCount = 0;
         if (ImGui::SliderFloat("Aperture Size", &pc.apertureSize, 0.0f, 0.5f))  pc.frameCount = 0;
@@ -1275,12 +1275,6 @@ void PathTracer::drawFrame() {
         pc.frameCount = 0;
     }
 
-    bool bvh = pc.useBVH != 0;
-    if (ImGui::Checkbox("Use BVH", &bvh)) {
-        pc.useBVH = bvh ? 1 : 0;
-        pc.frameCount = 0;
-    }
-
     bool meshes = pc.useMeshes != 0;
     if (ImGui::Checkbox("Show Chairs (Meshes)", &meshes)) {
         pc.useMeshes = meshes ? 1 : 0;
@@ -1290,13 +1284,26 @@ void PathTracer::drawFrame() {
     bool heatmap = pc.debugHeatmap != 0;
     if (ImGui::Checkbox("Debug Heatmap", &heatmap)) {
         pc.debugHeatmap = heatmap ? 1 : 0;
+        if (!heatmap) {
+            pc.useBVH = 1;
+        }
         pc.frameCount = 0;
     }
 
     if (pc.debugHeatmap) {
+        ImGui::Indent();
+
+        bool bvh = pc.useBVH != 0;
+        if (ImGui::Checkbox("Use BVH", &bvh)) {
+            pc.useBVH = bvh ? 1 : 0;
+            pc.frameCount = 0;
+        }
+
         if (ImGui::SliderFloat("Heatmap Max", &pc.heatmapMax, 16.0f, 6000.0f)) {
             pc.frameCount = 0;
         }
+
+        ImGui::Unindent();
     }
 
     int samples = static_cast<int>(pc.samples);

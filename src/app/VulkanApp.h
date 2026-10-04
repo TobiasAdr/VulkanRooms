@@ -13,7 +13,7 @@
 #include "imgui_impl_vulkan.h"
 #include "imgui_impl_glfw.h"
 
-const int WIDTH  = 1820;
+const int WIDTH  = 1920;
 const int HEIGHT = 1080;
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
