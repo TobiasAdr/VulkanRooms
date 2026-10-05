@@ -33,7 +33,10 @@
   </tr>
 </table>
 
-<sub><em>Promotional stills from <strong>Backrooms</strong> (Dir. Kane Parsons, A24 / Chernin Entertainment), displayed strictly for non-commercial reference and aesthetic benchmarking. All rights belong to the respective copyright holders.</em></sub>
+<sub><em>Visual comparison between reference material and engine outputs:</em></sub><br>
+<sub><em><strong>(a, c)</strong> Promotional stills from <strong>Backrooms</strong> (Dir. Kane Parsons, A24 / Chernin Entertainment), displayed strictly for non-commercial reference and aesthetic benchmarking.</em></sub><br>
+<sub><em><strong>(b, d)</strong> Rendered outputs generated with VulkanRooms.</em></sub><br>
+<sub><em>All rights to reference stills belong to their respective copyright holders.</em></sub>
 
 </div>
 
